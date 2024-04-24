@@ -48,6 +48,8 @@ import soot.Scene;
 import soot.SootClass;
 import soot.SootMethod;
 import soot.jimple.infoflow.android.data.AndroidMethod;
+// import soot.jimple.infoflow.android.data.AndroidMethod.CATEGORY;
+// import soot.jimple.infoflow.android.data.AndroidMethodCategoryComparator;
 import soot.jimple.infoflow.sourcesSinks.definitions.MethodSourceSinkDefinition;
 import soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType;
 import soot.jimple.infoflow.android.data.parsers.CSVPermissionMethodParser;
@@ -78,49 +80,50 @@ import weka.core.Range;
 import weka.core.converters.ArffSaver;
 
 /**
- * Finds possible sources and sinks in a given set of Android system methods using
+ * Finds possible sources and sinks in a given set of Android system methods
+ * using
  * a probabilistic algorithm trained on a previously annotated sample set.
  *
  * @author Steven Arzt
  *
  */
 public class SourceSinkFinder {
-	
+
 	private final static boolean ENABLE_PERMISSION = true;
 
 	private final static boolean LOAD_ANDROID = true;
 	private final static boolean DIFF = false;
-	
+
 	private final static boolean CLASSIFY_CATEGORY = true;
 
 	private final Set<IFeature> featuresSourceSink = initializeFeaturesSourceSink();
 	private final Set<IFeature> featuresCategories = initializeFeaturesCategories();
-	
+
 	private static String ANDROID; // android.jar的路径
-	
+
 	private static final HashSet<AndroidMethod> methodsWithPermissions = new HashSet<AndroidMethod>();
-			
+
 	private final static String WEKA_LEARNER_ALL = "SMO";
 	private final static String WEKA_LEARNER_CATEGORIES = "SMO";
-	
-//	private final static double THRESHOLD = 0.1;
-	private final static double THRESHOLD = 0.0; 
-	
+
+	// private final static double THRESHOLD = 0.1;
+	private final static double THRESHOLD = 0.0;
+
 	private long startSourceSinkAnalysisTime;
 	private long sourceSinkAnalysisTime;
-	
+
 	private long startCatSourcesTime;
 	private long catSourcesTime;
-	
+
 	private long startCatSinksTime;
 	private long catSinksTime;
 
 	private final static Logger logger = Logger.getLogger(SourceSinkFinder.class.getName());
 
 	/**
-	 * @param args  *First parameter: ANDROID platform jar path
-	 * 				*Third - x parameter: names of input
-	 * 				*Last parameter: file name of output
+	 * @param args *First parameter: ANDROID platform jar path
+	 *             *Third - x parameter: names of input
+	 *             *Last parameter: file name of output
 	 */
 	public static void main(String[] args) {
 		try {
@@ -131,10 +134,10 @@ public class SourceSinkFinder {
 						+ "<androidJAR> <input1>...<inputN> <outputFile>");
 				return;
 			}
-			
-			String[] inputs = Arrays.copyOfRange(args, 1, args.length-1);
-			
-			//set Android paths
+
+			String[] inputs = Arrays.copyOfRange(args, 1, args.length - 1);
+
+			// set Android paths
 			ANDROID = args[0];
 
 			SourceSinkFinder sourceSinkFinder = new SourceSinkFinder();
@@ -143,23 +146,30 @@ public class SourceSinkFinder {
 			e.printStackTrace();
 		}
 	}
-	
+
 	public void run(String[] inputFiles, String outputFile) throws IOException {
 		logger.info("Loading methods from " + Arrays.toString(inputFiles));
+		// 加载输入文件中的方法
 		Set<AndroidMethod> methods = loadMethodsFromFile(inputFiles);
+
+		for (AndroidMethod am : methods) {
+			System.out.println(am.getSignature() + " " + am.getSourceSinkType());
+		}
 
 		logger.info("Prefiltering interfaces");
 		// Prefilter the interfaces
+		// 进行过滤，筛选出可从android.jar里加载的，非fantom的方法
 		methods = PrefilterInterfaces(methods);
-		
+
 		// Create the custom annotations for derived methods
+		// 为派生方法进行标注
 		createSubclassAnnotations(methods);
 
 		if (LOAD_ANDROID) {
 			Set<AndroidMethod> newMethods = new HashSet<AndroidMethod>();
-
+			// 筛选出标注了的方法
 			for (AndroidMethod am : methods)
-				if (am.isAnnotated() || am.getSourceSinkType() != null)
+				if (am.isAnnotated())// || am.getCategory() != null)
 					newMethods.add(am);
 			methods = newMethods;
 
@@ -167,42 +177,44 @@ public class SourceSinkFinder {
 			loadMethodsFromAndroid(methods);
 			createSubclassAnnotations(methods);
 		}
-		
+
 		printStatistics(methods);
 		methods = sanityCheck(methods);
-		
+
 		// Classify the methods into sources, sinks and neither-nor entries
 		startSourceSinkAnalysisTime = System.currentTimeMillis();
+		// 进行分类
 		analyzeSourceSinkWeka(methods, outputFile);
 		sourceSinkAnalysisTime = System.currentTimeMillis() - startSourceSinkAnalysisTime;
 		System.out.println("Time to classify sources/sinks/neither: " + sourceSinkAnalysisTime + " ms");
-		
+
 		// Classify the categories
-		if(CLASSIFY_CATEGORY){
-			//source
-			startCatSourcesTime = System.currentTimeMillis();
-			analyzeCategories(methods, outputFile, true, false);
-			catSourcesTime = System.currentTimeMillis() - startCatSourcesTime;
-			System.out.println("Time to categorize sources: " + catSourcesTime + " ms");
-			
-			//sink
-			startCatSinksTime = System.currentTimeMillis();
-			analyzeCategories(methods, outputFile, false, true);
-			catSinksTime = System.currentTimeMillis() - startCatSinksTime;
-			System.out.println("Time to categorize sinks: " + catSinksTime + " ms");
-		}
-		writeRIFLSpecification(outputFile, methods);
+//		if (CLASSIFY_CATEGORY) {
+//			// source
+//			startCatSourcesTime = System.currentTimeMillis();
+//			analyzeCategories(methods, outputFile, true, false);
+//			catSourcesTime = System.currentTimeMillis() - startCatSourcesTime;
+//			System.out.println("Time to categorize sources: " + catSourcesTime + " ms");
+//
+//			// sink
+//			startCatSinksTime = System.currentTimeMillis();
+//			analyzeCategories(methods, outputFile, false, true);
+//			catSinksTime = System.currentTimeMillis() - startCatSinksTime;
+//			System.out.println("Time to categorize sinks: " + catSinksTime + " ms");
+//		}
+//		writeRIFLSpecification(outputFile, methods);
 	}
-	
+
 	/**
 	 * Checks whether there are semantic errors in the given set of Android
 	 * methods and tries to filter out duplicates by merging.
+	 * 
 	 * @param methods The set of method definitions to check
 	 * @return The purged set of Android methods without duplicates
 	 */
 	private Set<AndroidMethod> sanityCheck(Set<AndroidMethod> methods) {
 		Map<String, AndroidMethod> signatureToMethod = new HashMap<>(methods.size());
-		
+
 		for (AndroidMethod m1 : methods) {
 			String sig = m1.getSignature();
 			AndroidMethod m2 = signatureToMethod.get(sig);
@@ -216,16 +228,16 @@ public class SourceSinkFinder {
 						for (String permission : m1.getPermissions())
 							m2.addPermission(permission);
 					}
-					
+
 					// Merge the permissions
 					if (!m1.getPermissions().isEmpty()) {
 						for (String permission : m1.getPermissions())
 							m2.addPermission(permission);
 					}
-					
+
 					// Merge the categories
-					if (m2.getSourceSinkType() == null && m1.getSourceSinkType() != null)
-						m2.setSourceSinkType(m1.getSourceSinkType());
+					// if (m2.getCategory() == null && m1.getCategory() != null)
+					// m2.setCategory(m1.getCategory());
 				}
 			}
 		}
@@ -262,45 +274,43 @@ public class SourceSinkFinder {
 
 			wr = new BufferedWriter(new FileWriter(appendFileName(targetFileName, "_Sources")));
 			for (AndroidMethod am : methods)
-				if (am.getSourceSinkType().isSource()){
-					if(diff && !methodsWithPermissions.contains(am))
+				if (am.getSourceSinkType().isSource()) {
+					if (diff && !methodsWithPermissions.contains(am))
 						wr.write(am.toString() + "\n");
-					else if(!diff)
+					else if (!diff)
 						wr.write(am.toString() + "\n");
 				}
 			wr.flush();
 			wr.close();
-			
+
 			wr = new BufferedWriter(new FileWriter(appendFileName(targetFileName, "_Sinks")));
 			for (AndroidMethod am : methods)
-				if (am.getSourceSinkType().isSink()){
-					if(diff && !methodsWithPermissions.contains(am))
+				if (am.getSourceSinkType().isSink()) {
+					if (diff && !methodsWithPermissions.contains(am))
 						wr.write(am.toString() + "\n");
-					else if(!diff)
+					else if (!diff)
 						wr.write(am.toString() + "\n");
 				}
 			wr.flush();
-			wr.close();			
+			wr.close();
 
 			wr = new BufferedWriter(new FileWriter(appendFileName(targetFileName, "_NeitherNor")));
 			for (AndroidMethod am : methods)
-				if (am.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither){
-					if(diff && !methodsWithPermissions.contains(am))
+				if (am.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither) {
+					if (diff && !methodsWithPermissions.contains(am))
 						wr.write(am.toString() + "\n");
-					else if(!diff)
+					else if (!diff)
 						wr.write(am.toString() + "\n");
 				}
 			wr.flush();
 			wr.close();
-		}
-		finally {
+		} finally {
 			if (wr != null)
 				wr.close();
 		}
 	}
 
 	public class AndroidMethodCategoryComparator implements Comparator<AndroidMethod> {
-
 
 		@Override
 		public int compare(AndroidMethod o1, AndroidMethod o2) {
@@ -316,155 +326,149 @@ public class SourceSinkFinder {
 			return o1.getSourceSinkType().toString().compareTo(o2.getSourceSinkType().toString());
 		}
 	}
-	
-	private void writeCategoryResultsToFiles(String targetFileName,
-			Set<AndroidMethod> methods, boolean source, boolean sink, boolean diff) throws IOException {
-		// Dump the stuff
-		BufferedWriter wr = null;
-		ArrayList<AndroidMethod> methodsAsList = new ArrayList<AndroidMethod>(methods);
-		Comparator<AndroidMethod> catComparator = new AndroidMethodCategoryComparator();
-		Collections.sort(methodsAsList, catComparator);
-		try {
-			if(source && !sink){
-				wr = new BufferedWriter(new FileWriter(appendFileName(targetFileName, "_CatSources")));
-				SourceSinkType currentCat = null;
-				for (AndroidMethod am : methodsAsList){
-					if (am.getSourceSinkType().isSource()){
-						if(currentCat == null || currentCat != am.getSourceSinkType()){
-							currentCat = am.getSourceSinkType();
-							if (currentCat == null)
-								throw new RuntimeException("NULL category detected");
-							wr.write("\n" + currentCat.toString() + ":\n");
-						}
-						
-						if(diff && !methodsWithPermissions.contains(am))
-							wr.write(am.getSignatureAndPermissions() + " (" + currentCat.toString() + ")\n");
-						else if(!diff)
-							wr.write(am.getSignatureAndPermissions() + " (" + currentCat.toString() + ")\n");
-					}
-				}				
-				wr.flush();
-				wr.close();
-			}
-			else if(sink && !source){
-				wr = new BufferedWriter(new FileWriter(appendFileName(targetFileName, "_CatSinks")));
-				SourceSinkType currentCat = null;
-				for (AndroidMethod am : methodsAsList){
-					if (am.getSourceSinkType().isSink()){
-						if(currentCat == null || currentCat != am.getSourceSinkType()){
-							currentCat = am.getSourceSinkType();
-							wr.write("\n" + currentCat.toString() + ":\n");
-						}
-					
-						if(diff && !methodsWithPermissions.contains(am))
-							wr.write(am.getSignatureAndPermissions() + " (" + currentCat.toString() + ")\n");
-						else if(!diff)
-							wr.write(am.getSignatureAndPermissions() + " (" + currentCat.toString() + ")\n");
-					}	
-				}
-				wr.flush();
-				wr.close();	
-			}
-			else
-				throw new RuntimeException("Woops, wrong settings");
-		}
-		finally {
-			if (wr != null)
-				wr.close();
-		}
-	}
-	
-	private void writeRIFLSpecification(String targetFileName,
-			Set<AndroidMethod> methods) throws IOException {
-		RIFLDocument doc = new RIFLDocument();
-		
-		DomainSpec topDomain = doc.new DomainSpec("top");
-		DomainSpec bottomDomain = doc.new DomainSpec("bottom");
-		
-		doc.getDomains().add(topDomain);
-		doc.getDomains().add(bottomDomain);
-		
-		doc.getFlowPolicy().add(doc.new FlowPair(topDomain, topDomain));
-		doc.getFlowPolicy().add(doc.new FlowPair(bottomDomain, bottomDomain));
-		doc.getFlowPolicy().add(doc.new FlowPair(bottomDomain, topDomain));
-		
-		Map<String, Category> categoryMap = new HashMap<String, Category>();
-		Map<SourceSinkType, Assignable> assignableMap = new HashMap<SourceSinkType, Assignable>();
-		
-		for (AndroidMethod am : methods) {
-			// Parse the class and package names
-			SootMethodAndClass smac = SootMethodRepresentationParser.v().parseSootMethodString
-					(am.getSignature());
-			String halfSignature = am.getSubSignature().substring(am.getSubSignature().indexOf(" ") + 1);
-			
-			// Generate the category if it does not already exist
-			if (am.getSourceSinkType() != null) {
-				if (am.getSourceSinkType().isSource()) {
-					String catName = am.getSourceSinkType().toString() + "_src";
-					if (!categoryMap.containsKey(catName)) {
-						Category riflCat = doc.new Category(catName);
-						categoryMap.put(catName, riflCat);
-						
-						Assignable riflAssignable = doc.new Assignable(catName, riflCat);
-						assignableMap.put(am.getSourceSinkType(), riflAssignable);
-						
-						// Add the domain to the model
-						doc.getInterfaceSpec().getSourcesSinks().add(riflAssignable);
-						
-						// Place the new category in the hierarchy
-						doc.getDomainAssignment().add(doc.new DomainAssignment(riflAssignable, topDomain));
-					}
-				}
-				else if (am.getSourceSinkType().isSink()) {
-					String catName = am.getSourceSinkType().toString() + "_snk";
-					if (!categoryMap.containsKey(catName)) {
-						Category riflCat = doc.new Category(catName);
-						categoryMap.put(catName, riflCat);
-						
-						Assignable riflAssignable = doc.new Assignable(catName, riflCat);
-						assignableMap.put(am.getSourceSinkType(), riflAssignable);
-						
-						// Add the domain to the model
-						doc.getInterfaceSpec().getSourcesSinks().add(riflAssignable);
-						
-						// Place the new category in the hierarchy
-						doc.getDomainAssignment().add(doc.new DomainAssignment(riflAssignable, bottomDomain));
-					}
-				}
-			}
 
-			// Add the source/sink specification
-			if (am.getSourceSinkType() != null && (am.getSourceSinkType().isSource() || am.getSourceSinkType().isSink())) {
-				String catName = am.getSourceSinkType().toString() + (am.getSourceSinkType().isSource() ? "_src" : "_snk");
-				Category riflCat = categoryMap.get(catName);
-				if (riflCat == null)
-					throw new RuntimeException("Could not get category " + catName);
-				
-				if (am.getSourceSinkType().isSource()) {
-					// Taint the return value
-					SourceSinkSpec sourceSinkSpec = doc.new JavaReturnValueSpec(soot.jimple.infoflow.rifl.RIFLDocument.SourceSinkType.Source,
-							smac.getClassName(), halfSignature);
-					riflCat.getElements().add(sourceSinkSpec);
-				}
-				else if (am.getSourceSinkType().isSink()) {
-					// Annotate all parameters
-					for (int i = 0; i < am.getParameters().size(); i++) {
-						SourceSinkSpec sourceSinkSpec = doc.new JavaParameterSpec(soot.jimple.infoflow.rifl.RIFLDocument.SourceSinkType.Sink,
-								smac.getClassName(), halfSignature, i + 1);
-						riflCat.getElements().add(sourceSinkSpec);
-					}
-				}
-			}
-		}
-		
-		RIFLWriter writer = new RIFLWriter(doc);
-		String fileName = appendFileName(targetFileName, "_rifl");
-		PrintWriter wr = new PrintWriter(fileName);
-		wr.print(writer.write());
-		wr.flush();
-		wr.close();
-	}
-	
+	// private void writeCategoryResultsToFiles(String targetFileName,
+	// 		Set<AndroidMethod> methods, boolean source, boolean sink, boolean diff) throws IOException {
+	// 	// Dump the stuff
+	// 	BufferedWriter wr = null;
+	// 	ArrayList<AndroidMethod> methodsAsList = new ArrayList<AndroidMethod>(methods);
+	// 	Comparator<AndroidMethod> catComparator = new AndroidMethodCategoryComparator();
+	// 	Collections.sort(methodsAsList, catComparator);
+	// 	try {
+	// 		if (source && !sink) {
+	// 			wr = new BufferedWriter(new FileWriter(appendFileName(targetFileName, "_CatSources")));
+	// 			AndroidMethod.CATEGORY currentCat = null;
+	// 			for (AndroidMethod am : methodsAsList) {
+	// 				if (am.isSource()) {
+	// 					if (currentCat == null || currentCat != am.getCategory()) {
+	// 						currentCat = am.getCategory();
+	// 						if (currentCat == null)
+	// 							throw new RuntimeException("NULL category detected");
+	// 						wr.write("\n" + currentCat.toString() + ":\n");
+	// 					}
+
+	// 					if (diff && !methodsWithPermissions.contains(am))
+	// 						wr.write(am.getSignatureAndPermissions() + " (" + currentCat.toString() + ")\n");
+	// 					else if (!diff)
+	// 						wr.write(am.getSignatureAndPermissions() + " (" + currentCat.toString() + ")\n");
+	// 				}
+	// 			}
+	// 			wr.flush();
+	// 			wr.close();
+	// 		} else if (sink && !source) {
+	// 			wr = new BufferedWriter(new FileWriter(appendFileName(targetFileName, "_CatSinks")));
+	// 			AndroidMethod.CATEGORY currentCat = null;
+	// 			for (AndroidMethod am : methodsAsList) {
+	// 				if (am.isSink()) {
+	// 					if (currentCat == null || currentCat != am.getCategory()) {
+	// 						currentCat = am.getCategory();
+	// 						wr.write("\n" + currentCat.toString() + ":\n");
+	// 					}
+
+	// 					if (diff && !methodsWithPermissions.contains(am))
+	// 						wr.write(am.getSignatureAndPermissions() + " (" + currentCat.toString() + ")\n");
+	// 					else if (!diff)
+	// 						wr.write(am.getSignatureAndPermissions() + " (" + currentCat.toString() + ")\n");
+	// 				}
+	// 			}
+	// 			wr.flush();
+	// 			wr.close();
+	// 		} else
+	// 			throw new RuntimeException("Woops, wrong settings");
+	// 	} finally {
+	// 		if (wr != null)
+	// 			wr.close();
+	// 	}
+	// }
+
+	// private void writeRIFLSpecification(String targetFileName,
+	// 		Set<AndroidMethod> methods) throws IOException {
+	// 	RIFLDocument doc = new RIFLDocument();
+
+	// 	DomainSpec topDomain = doc.new DomainSpec("top");
+	// 	DomainSpec bottomDomain = doc.new DomainSpec("bottom");
+
+	// 	doc.getDomains().add(topDomain);
+	// 	doc.getDomains().add(bottomDomain);
+
+	// 	doc.getFlowPolicy().add(doc.new FlowPair(topDomain, topDomain));
+	// 	doc.getFlowPolicy().add(doc.new FlowPair(bottomDomain, bottomDomain));
+	// 	doc.getFlowPolicy().add(doc.new FlowPair(bottomDomain, topDomain));
+
+	// 	Map<String, Category> categoryMap = new HashMap<String, Category>();
+	// 	Map<CATEGORY, Assignable> assignableMap = new HashMap<CATEGORY, Assignable>();
+
+	// 	for (AndroidMethod am : methods) {
+	// 		// Parse the class and package names
+	// 		SootMethodAndClass smac = SootMethodRepresentationParser.v().parseSootMethodString(am.getSignature());
+	// 		String halfSignature = am.getSubSignature().substring(am.getSubSignature().indexOf(" ") + 1);
+
+	// 		// Generate the category if it does not already exist
+	// 		if (am.getCategory() != null) {
+	// 			if (am.isSource()) {
+	// 				String catName = am.getCategory().toString() + "_src";
+	// 				if (!categoryMap.containsKey(catName)) {
+	// 					Category riflCat = doc.new Category(catName);
+	// 					categoryMap.put(catName, riflCat);
+
+	// 					Assignable riflAssignable = doc.new Assignable(catName, riflCat);
+	// 					assignableMap.put(am.getCategory(), riflAssignable);
+
+	// 					// Add the domain to the model
+	// 					doc.getInterfaceSpec().getSourcesSinks().add(riflAssignable);
+
+	// 					// Place the new category in the hierarchy
+	// 					doc.getDomainAssignment().add(doc.new DomainAssignment(riflAssignable, topDomain));
+	// 				}
+	// 			} else if (am.isSink()) {
+	// 				String catName = am.getCategory().toString() + "_snk";
+	// 				if (!categoryMap.containsKey(catName)) {
+	// 					Category riflCat = doc.new Category(catName);
+	// 					categoryMap.put(catName, riflCat);
+
+	// 					Assignable riflAssignable = doc.new Assignable(catName, riflCat);
+	// 					assignableMap.put(am.getCategory(), riflAssignable);
+
+	// 					// Add the domain to the model
+	// 					doc.getInterfaceSpec().getSourcesSinks().add(riflAssignable);
+
+	// 					// Place the new category in the hierarchy
+	// 					doc.getDomainAssignment().add(doc.new DomainAssignment(riflAssignable, bottomDomain));
+	// 				}
+	// 			}
+	// 		}
+
+	// 		// Add the source/sink specification
+	// 		if (am.getCategory() != null && (am.isSource() || am.isSink())) {
+	// 			String catName = am.getCategory().toString() + (am.isSource() ? "_src" : "_snk");
+	// 			Category riflCat = categoryMap.get(catName);
+	// 			if (riflCat == null)
+	// 				throw new RuntimeException("Could not get category " + catName);
+
+	// 			if (am.isSource()) {
+	// 				// Taint the return value
+	// 				SourceSinkSpec sourceSinkSpec = doc.new JavaReturnValueSpec(SourceSinkType.Source,
+	// 						smac.getClassName(), halfSignature);
+	// 				riflCat.getElements().add(sourceSinkSpec);
+	// 			} else if (am.isSink()) {
+	// 				// Annotate all parameters
+	// 				for (int i = 0; i < am.getParameters().size(); i++) {
+	// 					SourceSinkSpec sourceSinkSpec = doc.new JavaParameterSpec(SourceSinkType.Sink,
+	// 							smac.getClassName(), halfSignature, i + 1);
+	// 					riflCat.getElements().add(sourceSinkSpec);
+	// 				}
+	// 			}
+	// 		}
+	// 	}
+
+	// 	RIFLWriter writer = new RIFLWriter(doc);
+	// 	String fileName = appendFileName(targetFileName, "_rifl");
+	// 	PrintWriter wr = new PrintWriter(fileName);
+	// 	wr.print(writer.write());
+	// 	wr.flush();
+	// 	wr.close();
+	// }
+
 	private Set<AndroidMethod> loadMethodsFromFile(String[] sourceFileName)
 			throws IOException {
 		// Read in the source file
@@ -472,10 +476,11 @@ public class SourceSinkFinder {
 		for (String fileName : sourceFileName) {
 			ISourceSinkDefinitionProvider pmp = createParser(fileName);
 			Set<soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkDefinition> methDefs = pmp.getAllMethods();
-			
+			logger.info("Parser load " + methDefs.size() + " methods from " + fileName);
+
 			for (SourceSinkDefinition ssd : methDefs) {
 				// 如果ssd是一个MethodSourceSinkDefinition，那么将其转换为AndroidMethod
-				AndroidMethod am = (AndroidMethod) ((MethodSourceSinkDefinition)ssd).getMethod();
+				AndroidMethod am = (AndroidMethod) ((MethodSourceSinkDefinition) ssd).getMethod();
 				if (methods.contains(am)) {
 					// Merge the methods
 					for (AndroidMethod amOrig : methods)
@@ -487,38 +492,37 @@ public class SourceSinkFinder {
 								amOrig.setSourceSinkType(SourceSinkType.Sink);
 							if (am.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither)
 								amOrig.setSourceSinkType(SourceSinkType.Neither);
-							
+
 							// Merge the permissions and parameters
 							amOrig.getPermissions().addAll(am.getPermissions());
 							amOrig.getParameters().addAll(am.getParameters());
-														
+
 							break;
 						}
-				}
-				else{
+				} else {
 					methods.add(am);
-					if(fileName.endsWith(".pscout"))
+					if (fileName.endsWith(".pscout"))
 						methodsWithPermissions.add(am);
 				}
 			}
 		}
-		
+
 		// Create features for the permissions
-		if(ENABLE_PERMISSION){
+		if (ENABLE_PERMISSION) {
 			createPermissionFeatures(methods, this.featuresSourceSink);
 			createPermissionFeatures(methods, this.featuresCategories);
 		}
 		System.out.println("Running with " + featuresSourceSink.size() + " features on "
 				+ methods.size() + " methods");
-		
+
 		return methods;
 	}
 
-	private void analyzeSourceSinkWeka(Set<AndroidMethod> methods, String targetFileName) throws IOException {			
+	private void analyzeSourceSinkWeka(Set<AndroidMethod> methods, String targetFileName) throws IOException {
 		FastVector ordinal = new FastVector();
 		ordinal.addElement("true");
 		ordinal.addElement("false");
-		
+
 		FastVector classes = new FastVector();
 		classes.addElement("source");
 		classes.addElement("sink");
@@ -533,14 +537,14 @@ public class SourceSinkFinder {
 			attributes.addElement(attr);
 		}
 		Attribute classAttr = new Attribute("class", classes);
-		
+
 		FastVector methodStrings = new FastVector();
 		for (AndroidMethod am : methods)
 			methodStrings.addElement(am.getSignature());
 		attributes.addElement(classAttr);
 		Attribute idAttr = new Attribute("id", methodStrings);
 		attributes.addElement(idAttr);
-		
+
 		Instances trainInstances = new Instances("trainingmethods", attributes, 0);
 		Instances testInstances = new Instances("allmethods", attributes, 0);
 		trainInstances.setClass(classAttr);
@@ -557,31 +561,33 @@ public class SourceSinkFinder {
 			Instance inst = new Instance(attributes.size());
 			inst.setDataset(trainInstances);
 
-			for (Entry<IFeature, Attribute> entry : featureAttribs.entrySet()){
-				switch(entry.getKey().applies(am)){
-					case TRUE: inst.setValue(entry.getValue(), "true"); break;
-					case FALSE: inst.setValue(entry.getValue(), "false"); break;
-					default: inst.setMissing(entry.getValue());
+			for (Entry<IFeature, Attribute> entry : featureAttribs.entrySet()) {
+				switch (entry.getKey().applies(am)) {
+					case TRUE:
+						inst.setValue(entry.getValue(), "true");
+						break;
+					case FALSE:
+						inst.setValue(entry.getValue(), "false");
+						break;
+					default:
+						inst.setMissing(entry.getValue());
 				}
 			}
 			inst.setValue(idAttr, am.getSignature());
 			instanceMethods.put(am.getSignature(), am);
 			instanceIndices.put(instanceId++, am);
-			
+
 			// Set the known classifications
 			if (am.getSourceSinkType().isSource()) {
 				inst.setClassValue("source");
 				sourceTraining++;
-			}
-			else if (am.getSourceSinkType().isSink()) {
+			} else if (am.getSourceSinkType().isSink()) {
 				inst.setClassValue("sink");
 				sinkTraining++;
-			}
-			else if (am.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither) {
+			} else if (am.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither) {
 				inst.setClassValue("neithernor");
 				nnTraining++;
-			}
-			else
+			} else
 				inst.setClassMissing();
 
 			if (am.isAnnotated())
@@ -589,39 +595,41 @@ public class SourceSinkFinder {
 			else
 				testInstances.add(inst);
 		}
-		
+
 		try {
-//			instances.randomize(new Random(1337));
+			// instances.randomize(new Random(1337));
 			Classifier classifier = null;
-			if(WEKA_LEARNER_ALL.equals("BayesNet"))			// (IBK / kNN) vs. SMO vs. (J48 vs. JRIP) vs. NaiveBayes // MultiClassClassifier f�r ClassifierPerformanceEvaluator
+			if (WEKA_LEARNER_ALL.equals("BayesNet")) // (IBK / kNN) vs. SMO vs. (J48 vs. JRIP) vs. NaiveBayes //
+														// MultiClassClassifier f�r ClassifierPerformanceEvaluator
 				classifier = new BayesNet();
-			else if(WEKA_LEARNER_ALL.equals("NaiveBayes"))
+			else if (WEKA_LEARNER_ALL.equals("NaiveBayes"))
 				classifier = new NaiveBayes();
-			else if(WEKA_LEARNER_ALL.equals("J48"))
+			else if (WEKA_LEARNER_ALL.equals("J48"))
 				classifier = new J48();
-			else if(WEKA_LEARNER_ALL.equals("SMO"))
+			else if (WEKA_LEARNER_ALL.equals("SMO"))
 				classifier = new SMO();
-			else if(WEKA_LEARNER_ALL.equals("JRip"))
+			else if (WEKA_LEARNER_ALL.equals("JRip"))
 				classifier = new JRip();
 			else
 				throw new Exception("Wrong WEKA learner!");
-			
+
 			ArffSaver saver = new ArffSaver();
 			saver.setInstances(trainInstances);
 			saver.setFile(new File("SourcesSinks_Train.arff"));
 			saver.writeBatch();
-			
+
 			Evaluation eval = new Evaluation(trainInstances);
 			StringBuffer sb = new StringBuffer();
-			eval.crossValidateModel(classifier, trainInstances, 10, new Random(1337), sb, new Range(attributes.indexOf(idAttr) + 1 + ""/* "1-" + (attributes.size() - 1)*/), true);
+			eval.crossValidateModel(classifier, trainInstances, 10, new Random(1337), sb,
+					new Range(attributes.indexOf(idAttr) + 1 + ""/* "1-" + (attributes.size() - 1) */), true);
 			System.out.println(sb.toString());
 			System.out.println("Class details: " + eval.toClassDetailsString());
 			System.out.println("Ran on a training set of " + sourceTraining + " sources, "
 					+ sinkTraining + " sinks, and " + nnTraining + " neither-nors");
 
 			classifier.buildClassifier(trainInstances);
-			if(WEKA_LEARNER_ALL.equals("J48")){
-				System.out.println(((J48)(classifier)).graph());
+			if (WEKA_LEARNER_ALL.equals("J48")) {
+				System.out.println(((J48) (classifier)).graph());
 			}
 			for (int instIdx = 0; instIdx < testInstances.numInstances(); instIdx++) {
 				Instance inst = testInstances.instance(instIdx);
@@ -632,216 +640,224 @@ public class SourceSinkFinder {
 				if (cName.equals("source")) {
 					inst.setClassValue("source");
 					meth.setSourceSinkType(SourceSinkType.Source);
-				}
-				else if (cName.equals("sink")) {
+				} else if (cName.equals("sink")) {
 					inst.setClassValue("sink");
 					meth.setSourceSinkType(SourceSinkType.Sink);
-				}
-				else if (cName.equals("neithernor")) {
+				} else if (cName.equals("neithernor")) {
 					inst.setClassValue("neithernor");
 					meth.setSourceSinkType(SourceSinkType.Neither);
-				}
-				else
+				} else
 					System.err.println("Unknown class name");
 			}
-		}
-		catch (Exception ex) {
+		} catch (Exception ex) {
 			System.err.println("Something went all wonky: " + ex);
 			ex.printStackTrace();
 		}
-		
-		if(DIFF)
+
+		if (DIFF)
 			writeResultsToFiles(targetFileName, methods, true);
 		else
 			writeResultsToFiles(targetFileName, methods, false);
-		
+
 		Runtime.getRuntime().gc();
 	}
 
-	private void analyzeCategories(Set<AndroidMethod> methods, String targetFileName,
-			boolean sources, boolean sinks) throws IOException {			
-		FastVector ordinal = new FastVector();
-		ordinal.addElement("true");
-		ordinal.addElement("false");
-		
-		// We are only interested in sources and sinks
-		{
-			Set<AndroidMethod> newMethods = new HashSet<AndroidMethod>(methods.size());
-			for (AndroidMethod am : methods) {
-				// Make sure that we run after source/sink classification
-				assert am.isAnnotated();
-				if (am.getSourceSinkType().isSink() == sinks && am.getSourceSinkType().isSource() == sources)
-					newMethods.add(am);
-			}
-			methods = newMethods;
-		}
-		System.out.println("We have a set of " + methods.size() + " sources and sinks.");
-		
-		// Build the class attribute, one possibility for every category
-		FastVector classes = new FastVector();
-		for (SourceSinkType cat : SourceSinkType.values()) {
-			// Only add the class if it is actually used
-			if (cat == SourceSinkType.Undefined)
-				classes.addElement(cat.toString());
-			else {
-				for (AndroidMethod am : methods)
-					if (am.getSourceSinkType().isSource() == sources
-							&& am.getSourceSinkType().isSink() == sinks
-							&& am.getSourceSinkType() == cat) {
-						classes.addElement(cat.toString());
-						break;
-					}
-			}
-		}
-
-		// Collect all attributes and create the instance set
-		Map<IFeature, Attribute> featureAttribs = new HashMap<IFeature, Attribute>(this.featuresCategories.size());
-		FastVector attributes = new FastVector();
-		for (IFeature f : this.featuresCategories) {
-			Attribute attr = new Attribute(f.toString(), ordinal);
-			featureAttribs.put(f, attr);
-			attributes.addElement(attr);
-		}
-		Attribute classAttr = new Attribute("class", classes);
-		
-		FastVector methodStrings = new FastVector();
-		for (AndroidMethod am : methods)
-			methodStrings.addElement(am.getSignature());
-		attributes.addElement(classAttr);
-		Attribute idAttr = new Attribute("id", methodStrings);
-		attributes.addElement(idAttr);
-		
-		Instances trainInstances = new Instances("trainingmethodsCat", attributes, 0);
-		Instances testInstances = new Instances("allmethodsCat", attributes, 0);
-		trainInstances.setClass(classAttr);
-		testInstances.setClass(classAttr);
-
-		// Create one instance object per data row
-		int instanceId = 0;
-		Map<String, AndroidMethod> instanceMethods = new HashMap<String, AndroidMethod>(methods.size());
-		Map<Integer, AndroidMethod> instanceIndices = new HashMap<Integer, AndroidMethod>(methods.size());
-		for (AndroidMethod am : methods) {
-			Instance inst = new Instance(attributes.size());
-			inst.setDataset(trainInstances);
-
-			for (Entry<IFeature, Attribute> entry : featureAttribs.entrySet()){
-				switch(entry.getKey().applies(am)){
-					case TRUE: inst.setValue(entry.getValue(), "true"); break;
-					case FALSE: inst.setValue(entry.getValue(), "false"); break;
-					default: inst.setMissing(entry.getValue());
-				}
-			}
-			inst.setValue(idAttr, am.getSignature());
-			instanceMethods.put(am.getSignature(), am);
-			instanceIndices.put(instanceId++, am);
-
-			// Set the known classifications
-			if (am.getSourceSinkType() == null) {
-				inst.setClassMissing();
-				testInstances.add(inst);
-			}
-			else {
-				inst.setClassValue(am.getSourceSinkType().toString());
-				trainInstances.add(inst);
-			}
-		}
-		System.out.println("Running category classifier on "
-				+ trainInstances.numInstances() + " instances with "
-				+ attributes.size() + " attributes...");
-
-		ArffSaver saver = new ArffSaver();
-		saver.setInstances(trainInstances);
-		if (sources)
-			saver.setFile(new File("CategoriesSources_Train.arff"));
-		else
-			saver.setFile(new File("CategoriesSinks_Train.arff"));
-		saver.writeBatch();
-
-		try {
-//			instances.randomize(new Random(1337));
-			int noCatIdx = classes.indexOf("Undefined");
-			if (noCatIdx < 0)
-				throw new RuntimeException("Could not find Undefined index");
-
-			Classifier classifier = null;
-			if(WEKA_LEARNER_CATEGORIES.equals("BayesNet"))			// (IBK / kNN) vs. SMO vs. (J48 vs. JRIP) vs. NaiveBayes // MultiClassClassifier f�r ClassifierPerformanceEvaluator
-				classifier = new CutoffClassifier(new BayesNet(), THRESHOLD, noCatIdx);
-			else if(WEKA_LEARNER_CATEGORIES.equals("NaiveBayes"))
-				classifier = new CutoffClassifier(new NaiveBayes(), THRESHOLD, noCatIdx);
-			else if(WEKA_LEARNER_CATEGORIES.equals("J48"))
-				classifier = new CutoffClassifier(new J48(), THRESHOLD, noCatIdx);
-			else if(WEKA_LEARNER_CATEGORIES.equals("SMO"))
-//				classifier = new CutoffClassifier(new SMO(), THRESHOLD, noCatIdx);
-				classifier = new SMO();
-			else if(WEKA_LEARNER_CATEGORIES.equals("JRip"))
-				classifier = new CutoffClassifier(new JRip(), THRESHOLD, noCatIdx);
-			else
-				throw new Exception("Wrong WEKA learner!");
-			
-			Evaluation eval = new Evaluation(trainInstances);
-			/*for (int foldNum = 0; foldNum < 10; foldNum++) {
-				Instances train = trainInstances.trainCV(10, foldNum, new Random(1337));
-				Instances test = trainInstances.testCV(10, foldNum);
-				
-				Classifier clsCopy = Classifier.makeCopy(classifier);
-				clsCopy.buildClassifier(train);
-
-				eval.evaluateModel(clsCopy, test);
-			}*/
-			
-			
-			StringBuffer sb = new StringBuffer();
-			eval.crossValidateModel(classifier, trainInstances, 10, new Random(1337), sb, new Range(attributes.indexOf(idAttr) + 1 + ""), true);
-			System.out.println(sb.toString());
-			
-			System.out.println("Class details: " + eval.toClassDetailsString());
-
-			classifier.buildClassifier(trainInstances);
-			if(WEKA_LEARNER_CATEGORIES.equals("J48")){
-				Classifier baseClassifier = ((CutoffClassifier)classifier).getBaseClassifier();
-				System.out.println(((J48)(baseClassifier)).graph());
-			}
-			System.out.println("Record\tSource\tSink\tNN");
-			for (int instNum = 0; instNum < testInstances.numInstances(); instNum++) {
-				Instance inst = testInstances.instance(instNum);
-				assert inst.classIsMissing();
-				AndroidMethod meth = instanceMethods.get(inst.stringValue(idAttr));
-				double d = classifier.classifyInstance(inst);
-				String cName = trainInstances.classAttribute().value((int) d);
-				meth.setSourceSinkType(SourceSinkType.valueOf(cName));
-			}
-		}
-		catch (Exception ex) {
-			System.err.println("Something went all wonky: " + ex);
-			ex.printStackTrace();
-		}
-		
-		if(DIFF)
-			writeCategoryResultsToFiles(targetFileName, methods, sources, sinks, true);
-		else
-			writeCategoryResultsToFiles(targetFileName, methods, sources, sinks, false);
-	}
+//	private void analyzeCategories(Set<AndroidMethod> methods, String targetFileName,
+//			boolean sources, boolean sinks) throws IOException {
+//		FastVector ordinal = new FastVector();
+//		ordinal.addElement("true");
+//		ordinal.addElement("false");
+//
+//		// We are only interested in sources and sinks
+//		{
+//			Set<AndroidMethod> newMethods = new HashSet<AndroidMethod>(methods.size());
+//			for (AndroidMethod am : methods) {
+//				// Make sure that we run after source/sink classification
+//				assert am.isAnnotated();
+//				if (am.isSink() == sinks && am.isSource() == sources)
+//					newMethods.add(am);
+//			}
+//			methods = newMethods;
+//		}
+//		System.out.println("We have a set of " + methods.size() + " sources and sinks.");
+//
+//		// Build the class attribute, one possibility for every category
+//		FastVector classes = new FastVector();
+//		for (AndroidMethod.CATEGORY cat : AndroidMethod.CATEGORY.values()) {
+//			// Only add the class if it is actually used
+//			if (cat == CATEGORY.NO_CATEGORY)
+//				classes.addElement(cat.toString());
+//			else {
+//				for (AndroidMethod am : methods)
+//					if (am.isSource() == sources
+//							&& am.isSink() == sinks
+//							&& am.getCategory() == cat) {
+//						classes.addElement(cat.toString());
+//						break;
+//					}
+//			}
+//		}
+//
+//		// Collect all attributes and create the instance set
+//		Map<IFeature, Attribute> featureAttribs = new HashMap<IFeature, Attribute>(this.featuresCategories.size());
+//		FastVector attributes = new FastVector();
+//		for (IFeature f : this.featuresCategories) {
+//			Attribute attr = new Attribute(f.toString(), ordinal);
+//			featureAttribs.put(f, attr);
+//			attributes.addElement(attr);
+//		}
+//		Attribute classAttr = new Attribute("class", classes);
+//
+//		FastVector methodStrings = new FastVector();
+//		for (AndroidMethod am : methods)
+//			methodStrings.addElement(am.getSignature());
+//		attributes.addElement(classAttr);
+//		Attribute idAttr = new Attribute("id", methodStrings);
+//		attributes.addElement(idAttr);
+//
+//		Instances trainInstances = new Instances("trainingmethodsCat", attributes, 0);
+//		Instances testInstances = new Instances("allmethodsCat", attributes, 0);
+//		trainInstances.setClass(classAttr);
+//		testInstances.setClass(classAttr);
+//
+//		// Create one instance object per data row
+//		int instanceId = 0;
+//		Map<String, AndroidMethod> instanceMethods = new HashMap<String, AndroidMethod>(methods.size());
+//		Map<Integer, AndroidMethod> instanceIndices = new HashMap<Integer, AndroidMethod>(methods.size());
+//		for (AndroidMethod am : methods) {
+//			Instance inst = new Instance(attributes.size());
+//			inst.setDataset(trainInstances);
+//
+//			for (Entry<IFeature, Attribute> entry : featureAttribs.entrySet()) {
+//				switch (entry.getKey().applies(am)) {
+//					case TRUE:
+//						inst.setValue(entry.getValue(), "true");
+//						break;
+//					case FALSE:
+//						inst.setValue(entry.getValue(), "false");
+//						break;
+//					default:
+//						inst.setMissing(entry.getValue());
+//				}
+//			}
+//			inst.setValue(idAttr, am.getSignature());
+//			instanceMethods.put(am.getSignature(), am);
+//			instanceIndices.put(instanceId++, am);
+//
+//			// Set the known classifications
+//			if (am.getCategory() == null) {
+//				inst.setClassMissing();
+//				testInstances.add(inst);
+//			} else {
+//				inst.setClassValue(am.getCategory().toString());
+//				trainInstances.add(inst);
+//			}
+//		}
+//		System.out.println("Running category classifier on "
+//				+ trainInstances.numInstances() + " instances with "
+//				+ attributes.size() + " attributes...");
+//
+//		ArffSaver saver = new ArffSaver();
+//		saver.setInstances(trainInstances);
+//		if (sources)
+//			saver.setFile(new File("CategoriesSources_Train.arff"));
+//		else
+//			saver.setFile(new File("CategoriesSinks_Train.arff"));
+//		saver.writeBatch();
+//
+//		try {
+//			// instances.randomize(new Random(1337));
+//			int noCatIdx = classes.indexOf("NO_CATEGORY");
+//			if (noCatIdx < 0)
+//				throw new RuntimeException("Could not find NO_CATEGORY index");
+//
+//			Classifier classifier = null;
+//			if (WEKA_LEARNER_CATEGORIES.equals("BayesNet")) // (IBK / kNN) vs. SMO vs. (J48 vs. JRIP) vs. NaiveBayes //
+//															// MultiClassClassifier f�r ClassifierPerformanceEvaluator
+//				classifier = new CutoffClassifier(new BayesNet(), THRESHOLD, noCatIdx);
+//			else if (WEKA_LEARNER_CATEGORIES.equals("NaiveBayes"))
+//				classifier = new CutoffClassifier(new NaiveBayes(), THRESHOLD, noCatIdx);
+//			else if (WEKA_LEARNER_CATEGORIES.equals("J48"))
+//				classifier = new CutoffClassifier(new J48(), THRESHOLD, noCatIdx);
+//			else if (WEKA_LEARNER_CATEGORIES.equals("SMO"))
+//				// classifier = new CutoffClassifier(new SMO(), THRESHOLD, noCatIdx);
+//				classifier = new SMO();
+//			else if (WEKA_LEARNER_CATEGORIES.equals("JRip"))
+//				classifier = new CutoffClassifier(new JRip(), THRESHOLD, noCatIdx);
+//			else
+//				throw new Exception("Wrong WEKA learner!");
+//
+//			Evaluation eval = new Evaluation(trainInstances);
+//			/*
+//			 * for (int foldNum = 0; foldNum < 10; foldNum++) {
+//			 * Instances train = trainInstances.trainCV(10, foldNum, new Random(1337));
+//			 * Instances test = trainInstances.testCV(10, foldNum);
+//			 *
+//			 * Classifier clsCopy = Classifier.makeCopy(classifier);
+//			 * clsCopy.buildClassifier(train);
+//			 *
+//			 * eval.evaluateModel(clsCopy, test);
+//			 * }
+//			 */
+//
+//			StringBuffer sb = new StringBuffer();
+//			eval.crossValidateModel(classifier, trainInstances, 10, new Random(1337), sb,
+//					new Range(attributes.indexOf(idAttr) + 1 + ""), true);
+//			System.out.println(sb.toString());
+//
+//			System.out.println("Class details: " + eval.toClassDetailsString());
+//
+//			classifier.buildClassifier(trainInstances);
+//			if (WEKA_LEARNER_CATEGORIES.equals("J48")) {
+//				Classifier baseClassifier = ((CutoffClassifier) classifier).getBaseClassifier();
+//				System.out.println(((J48) (baseClassifier)).graph());
+//			}
+//			System.out.println("Record\tSource\tSink\tNN");
+//			for (int instNum = 0; instNum < testInstances.numInstances(); instNum++) {
+//				Instance inst = testInstances.instance(instNum);
+//				assert inst.classIsMissing();
+//				AndroidMethod meth = instanceMethods.get(inst.stringValue(idAttr));
+//				double d = classifier.classifyInstance(inst);
+//				String cName = trainInstances.classAttribute().value((int) d);
+//				meth.setCategory(AndroidMethod.CATEGORY.valueOf(cName));
+//			}
+//		} catch (Exception ex) {
+//			System.err.println("Something went all wonky: " + ex);
+//			ex.printStackTrace();
+//		}
+//
+//		if (DIFF)
+//			writeCategoryResultsToFiles(targetFileName, methods, sources, sinks, true);
+//		else
+//			writeCategoryResultsToFiles(targetFileName, methods, sources, sinks, false);
+//	}
 
 	private void loadMethodsFromAndroid(final Set<AndroidMethod> methods) {
 		int methodCount = methods.size();
 		new AbstractSootFeature(ANDROID) {
-			
+
 			@Override
 			public Type appliesInternal(AndroidMethod method) {
-				for (SootClass sc : Scene.v().getClasses())
+				int methodCount = 0;
+				for (SootClass sc : Scene.v().getClasses()) {
 					if (!sc.isInterface()
 							&& !sc.isPrivate())
-//							&& sc.getName().startsWith("android.")
-//							&& sc.getName().startsWith("com."))
-					for (SootMethod sm : sc.getMethods())
-						if (sm.isConcrete()
-								&& !sm.isPrivate()) {
-							AndroidMethod newMethod = new AndroidMethod(sm);
-							methods.add(newMethod);
-						}
+					// && sc.getName().startsWith("android.")
+					// && sc.getName().startsWith("com."))
+					{
+						methodCount += sc.getMethodCount();
+						for (SootMethod sm : sc.getMethods())
+							if (sm.isConcrete()
+									&& !sm.isPrivate()) {
+								AndroidMethod newMethod = new AndroidMethod(sm);
+								methods.add(newMethod);
+							}
+
+					}
+				}
 				return Type.NOT_SUPPORTED;
 			}
-			
+
 		}.applies(new AndroidMethod("a", "void", "x.y"));
 		System.out.println("Loaded " + (methods.size() - methodCount) + " methods from Android JAR");
 	}
@@ -851,8 +867,9 @@ public class SourceSinkFinder {
 	 * If the class A implements some method foo() which is marked as e.g. a
 	 * source and class B extends A, but does not overwrite foo(), B.foo()
 	 * must also be a source.
+	 * 
 	 * @param methods The list of method for which to create subclass
-	 * annotations
+	 *                annotations
 	 */
 	private void createSubclassAnnotations(final Set<AndroidMethod> methods) {
 		int copyCount = -1;
@@ -862,7 +879,7 @@ public class SourceSinkFinder {
 			for (AndroidMethod am : methods) {
 				// Check whether one of the parent classes is already annotated
 				AbstractSootFeature asf = new AbstractSootFeature(ANDROID) {
-					
+
 					@Override
 					public Type appliesInternal(AndroidMethod method) {
 						// This already searches up the class hierarchy until we
@@ -870,7 +887,7 @@ public class SourceSinkFinder {
 						SootMethod parentMethod = getSootMethod(method);
 						if (parentMethod == null)
 							return Type.NOT_SUPPORTED;
-						
+
 						// If we have found the method in a base class and not in
 						// the current one, we can copy our current method's
 						// annotation to this base class. (copy-down)
@@ -880,21 +897,22 @@ public class SourceSinkFinder {
 							AndroidMethod parentMethodData = findAndroidMethod(parentMethod);
 							if (parentMethodData == null)
 								return Type.NOT_SUPPORTED;
-							
+
 							// If we have annotations for both methods, they must match
 							if (parentMethodData.isAnnotated() && method.isAnnotated())
-								if (parentMethodData.getSourceSinkType().isSource() != method.getSourceSinkType().isSource()
-										|| parentMethodData.getSourceSinkType().isSink() != method.getSourceSinkType().isSink()
-										|| (parentMethodData.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither) != (method.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither))
+								if (parentMethodData.getSourceSinkType().isSource() != method.getSourceSinkType()
+										.isSource()
+										|| parentMethodData.getSourceSinkType().isSink() != method.getSourceSinkType()
+												.isSink()
+										|| (parentMethodData
+												.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither) != (method
+														.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither))
 									throw new RuntimeException("Annotation mismatch for "
 											+ parentMethodData + " and " + method);
-							if (parentMethodData.getSourceSinkType() != null && method.getSourceSinkType() != null)
-								if (parentMethodData.getSourceSinkType() != SourceSinkType.Undefined && method.getSourceSinkType() != SourceSinkType.Undefined)
-									if (parentMethodData.getSourceSinkType() != method.getSourceSinkType()) {
-										System.out.println("parent source sink type: " + parentMethodData.getSourceSinkType() + " method source sink type: " + method.getSourceSinkType());
-										throw new RuntimeException("Category mismatch for "
-												+ parentMethod + " and " + method);
-									}
+//							if (parentMethodData.getCategory() != null && method.getCategory() != null)
+//								if (parentMethodData.getCategory() != method.getCategory())
+//										throw new RuntimeException("Category mismatch for "
+//												+ parentMethod + " and " + method);
 
 							// If we only have annotations for the parent method, but not for
 							// the current one, we copy it down
@@ -902,21 +920,21 @@ public class SourceSinkFinder {
 								method.setSourceSinkType(parentMethodData.getSourceSinkType());
 								copied = true;
 							}
-							if (parentMethodData.getSourceSinkType() != null && method.getSourceSinkType() == null)
-								method.setSourceSinkType(parentMethodData.getSourceSinkType());
-							
+//							if (parentMethodData.getCategory() != null && method.getCategory() == null)
+//								method.setCategory(parentMethodData.getCategory());
+
 							// If we only have annotations for the current method, but not for
 							// the parent one, we can copy it up
 							if (!parentMethodData.isAnnotated() && method.isAnnotated()) {
 								parentMethodData.setSourceSinkType(method.getSourceSinkType());
 								copied = true;
 							}
-							if (parentMethodData.getSourceSinkType() == null && method.getSourceSinkType() != null)
-								parentMethodData.setSourceSinkType(method.getSourceSinkType());
+//							if (parentMethodData.getCategory() == null && method.getCategory() != null)
+//								parentMethodData.setCategory(method.getCategory());
 						}
 						return copied ? Type.TRUE : Type.FALSE;
 					}
-					
+
 					private AndroidMethod findAndroidMethod(SootMethod sm) {
 						AndroidMethod smData = new AndroidMethod(sm);
 						for (AndroidMethod am : methods)
@@ -938,6 +956,7 @@ public class SourceSinkFinder {
 	/**
 	 * Removes all interfaces from the given set of methods and returns the
 	 * purged set.
+	 * 
 	 * @param methods The set of methods from which to remove the interfaces.
 	 * @return The purged set of methods.
 	 */
@@ -945,13 +964,13 @@ public class SourceSinkFinder {
 		Set<AndroidMethod> purgedMethods = new HashSet<AndroidMethod>(methods.size());
 		for (AndroidMethod am : methods) {
 			AbstractSootFeature asf = new AbstractSootFeature(ANDROID) {
-			
+
 				@Override
 				public Type appliesInternal(AndroidMethod method) {
-					SootMethod sm = getSootMethod(method); // 会出现找不到的类
+					SootMethod sm = getSootMethod(method); // 会出现找不到的类，找了一下好像也确实没找到
 					if (sm == null)
 						return Type.NOT_SUPPORTED;
-					
+
 					if (sm.isAbstract() || sm.getDeclaringClass().isInterface()
 							|| sm.isPrivate())
 						return Type.FALSE;
@@ -959,7 +978,7 @@ public class SourceSinkFinder {
 						return Type.TRUE;
 				}
 			};
-			
+
 			if (asf.applies(am) == Type.TRUE)
 				purgedMethods.add(am);
 		}
@@ -969,6 +988,7 @@ public class SourceSinkFinder {
 
 	/**
 	 * Creates one feature for every unique permission required by a method
+	 * 
 	 * @param methods The list of methods and permissions
 	 */
 	private void createPermissionFeatures(Set<AndroidMethod> methods,
@@ -987,22 +1007,23 @@ public class SourceSinkFinder {
 	private ISourceSinkDefinitionProvider createParser(String fileName) throws IOException {
 		String fileExt = fileName.substring(fileName.lastIndexOf("."));
 		if (fileExt.equalsIgnoreCase(".txt"))
-			return (ISourceSinkDefinitionProvider) PermissionMethodParser.fromFile(fileName);
+			return PermissionMethodParser.fromFile(fileName);
 		if (fileExt.equalsIgnoreCase(".csv"))
-			return (ISourceSinkDefinitionProvider) new CSVPermissionMethodParser(fileName);
+			return new CSVPermissionMethodParser(fileName);
 		if (fileExt.equalsIgnoreCase(".pscout"))
-			return (ISourceSinkDefinitionProvider) new PScoutPermissionMethodParser(fileName);
+			return new PScoutPermissionMethodParser(fileName);
 		throw new RuntimeException("Unknown source file format");
 	}
-	
+
 	/**
 	 * Initializes the set of features for classifying methods as sources,
 	 * sinks or neither-nor entries.
+	 * 
 	 * @return The generated feature set.
 	 */
 	private Set<IFeature> initializeFeaturesSourceSink() {
 		Set<IFeature> features = new HashSet<IFeature>();
-		
+
 		/* Method name indications */
 		IFeature nameStartsWithGet = new MethodNameStartsWithFeature("get", 0.2f);
 		features.add(nameStartsWithGet);
@@ -1026,31 +1047,38 @@ public class SourceSinkFinder {
 		features.add(nameStartsWithHandle);
 		IFeature nameStartsWithClear = new MethodNameStartsWithFeature("clear", 0.3f);
 		features.add(nameStartsWithClear);
-		/* Does not change anything
-		IFeature nameStartsWithShow = new MethodNameStartsWithFeature("show", 0.2f);
-		features.add(nameStartsWithShow);
-		IFeature nameStartsWithMove = new MethodNameStartsWithFeature("move", 0.1f);
-		features.add(nameStartsWithMove);
-		IFeature nameStartsWithConnect = new MethodNameStartsWithFeature("connect", 0.1f);
-		features.add(nameStartsWithConnect);
-		IFeature nameStartsWithEnforce = new MethodNameStartsWithFeature("enforce", 0.1f);
-		features.add(nameStartsWithEnforce);
-		IFeature nameStartsWithDisplay = new MethodNameStartsWithFeature("display", 0.1f);
-		features.add(nameStartsWithDisplay);
-		IFeature nameStartsWithPull = new MethodNameStartsWithFeature("pull", 0.1f);
-		features.add(nameStartsWithPull);
-
-		IFeature nameStartsWithPresent = new MethodNameStartsWithFeature("present", 0.1f);
-		features.add(nameStartsWithPresent);
-		IFeature nameStartsWithSave = new MethodNameStartsWithFeature("save", 0.3f);
-		features.add(nameStartsWithSave);
-		IFeature nameStartsWithWrite = new MethodNameStartsWithFeature("write", 0.3f);
-		features.add(nameStartsWithWrite);
-		IFeature nameStartsWithBroadcast = new MethodNameStartsWithFeature("broadcast", 0.1f);
-		features.add(nameStartsWithBroadcast);
-		IFeature nameEndsWithUpdated = new MethodNameEndsWithFeature("Updated");
-		features.add(nameEndsWithUpdated);
-		*/
+		/*
+		 * Does not change anything
+		 * IFeature nameStartsWithShow = new MethodNameStartsWithFeature("show", 0.2f);
+		 * features.add(nameStartsWithShow);
+		 * IFeature nameStartsWithMove = new MethodNameStartsWithFeature("move", 0.1f);
+		 * features.add(nameStartsWithMove);
+		 * IFeature nameStartsWithConnect = new MethodNameStartsWithFeature("connect",
+		 * 0.1f);
+		 * features.add(nameStartsWithConnect);
+		 * IFeature nameStartsWithEnforce = new MethodNameStartsWithFeature("enforce",
+		 * 0.1f);
+		 * features.add(nameStartsWithEnforce);
+		 * IFeature nameStartsWithDisplay = new MethodNameStartsWithFeature("display",
+		 * 0.1f);
+		 * features.add(nameStartsWithDisplay);
+		 * IFeature nameStartsWithPull = new MethodNameStartsWithFeature("pull", 0.1f);
+		 * features.add(nameStartsWithPull);
+		 * 
+		 * IFeature nameStartsWithPresent = new MethodNameStartsWithFeature("present",
+		 * 0.1f);
+		 * features.add(nameStartsWithPresent);
+		 * IFeature nameStartsWithSave = new MethodNameStartsWithFeature("save", 0.3f);
+		 * features.add(nameStartsWithSave);
+		 * IFeature nameStartsWithWrite = new MethodNameStartsWithFeature("write",
+		 * 0.3f);
+		 * features.add(nameStartsWithWrite);
+		 * IFeature nameStartsWithBroadcast = new
+		 * MethodNameStartsWithFeature("broadcast", 0.1f);
+		 * features.add(nameStartsWithBroadcast);
+		 * IFeature nameEndsWithUpdated = new MethodNameEndsWithFeature("Updated");
+		 * features.add(nameEndsWithUpdated);
+		 */
 		IFeature nameStartsWithRemove = new MethodNameStartsWithFeature("remove", 0.3f);
 		features.add(nameStartsWithRemove);
 		IFeature nameStartsWithRelease = new MethodNameStartsWithFeature("release", 0.3f);
@@ -1084,7 +1112,7 @@ public class SourceSinkFinder {
 		IFeature nameStartsWithProcess = new MethodNameStartsWithFeature("process", 0.1f);
 		features.add(nameStartsWithProcess);
 		IFeature nameStartsWithRun = new MethodNameStartsWithFeature("run", 0.1f);
-		features.add(nameStartsWithRun);		
+		features.add(nameStartsWithRun);
 		IFeature nameStartsWithPerform = new MethodNameStartsWithFeature("perform", 0.1f);
 		features.add(nameStartsWithPerform);
 		IFeature nameStartsWithToggle = new MethodNameStartsWithFeature("toggle", 0.1f);
@@ -1102,59 +1130,63 @@ public class SourceSinkFinder {
 		IFeature nameStartsWithRequest = new MethodNameStartsWithFeature("request", 0.1f);
 		features.add(nameStartsWithRequest);
 		IFeature nameStartsWithRestore = new MethodNameStartsWithFeature("restore", 0.1f);
-		features.add(nameStartsWithRestore);		
+		features.add(nameStartsWithRestore);
 		IFeature nameStartsWithInsert = new MethodNameStartsWithFeature("insert", 0.1f);
 		features.add(nameStartsWithInsert);
 		IFeature nameStartsWithOnClick = new MethodNameStartsWithFeature("onClick", 0.1f);
 		features.add(nameStartsWithOnClick);
 		IFeature nameEndWithMessenger = new MethodNameEndsWithFeature("Messenger");
 		features.add(nameEndWithMessenger);
-		
+
 		IFeature parameterStartsWithJavaIo = new ParameterContainsTypeOrNameFeature("java.io.");
-		features.add(parameterStartsWithJavaIo);		
+		features.add(parameterStartsWithJavaIo);
 		IFeature parameterStartsWithCursor = new ParameterContainsTypeOrNameFeature("android.database.Cursor");
 		features.add(parameterStartsWithCursor);
-		IFeature parameterStartsWithContenResolver = new ParameterContainsTypeOrNameFeature("android.content.ContentResolver");
+		IFeature parameterStartsWithContenResolver = new ParameterContainsTypeOrNameFeature(
+				"android.content.ContentResolver");
 		features.add(parameterStartsWithContenResolver);
 		IFeature parameterTypeURI = new ParameterContainsTypeOrNameFeature("android.net.Uri");
 		features.add(parameterTypeURI);
 		IFeature parameterTypeHasGoogleIO = new ParameterContainsTypeOrNameFeature("com.google.common.io");
-		features.add(parameterTypeHasGoogleIO);		
+		features.add(parameterTypeHasGoogleIO);
 		IFeature parameterTypeHasContext = new ParameterContainsTypeOrNameFeature("android.content.Context");
 		features.add(parameterTypeHasContext);
 		IFeature parameterEndsWithObserver = new ParameterContainsTypeOrNameFeature("Observer");
 		features.add(parameterEndsWithObserver);
 		IFeature parameterTypeHasWriter = new ParameterContainsTypeOrNameFeature("Writer");
-		features.add(parameterTypeHasWriter);		
+		features.add(parameterTypeHasWriter);
 		IFeature parameterTypeHasEvent = new ParameterContainsTypeOrNameFeature("Event");
 		features.add(parameterTypeHasEvent);
-		
-//		IFeature parameterTypeHasOutputStream = new ParameterHasTypeFeature("OutputStream", 0.2f);
-//		features.add(parameterTypeHasOutputStream);
-//		
-//		IFeature parameterTypeHasInputStream = new ParameterHasTypeFeature("InputStream", 0.2f);
-//		features.add(parameterTypeHasInputStream);
-		
-		
+
+		// IFeature parameterTypeHasOutputStream = new
+		// ParameterHasTypeFeature("OutputStream", 0.2f);
+		// features.add(parameterTypeHasOutputStream);
+		//
+		// IFeature parameterTypeHasInputStream = new
+		// ParameterHasTypeFeature("InputStream", 0.2f);
+		// features.add(parameterTypeHasInputStream);
+
 		/* DOES NOT CHANGE ANYTHING */
 		// (unfortunately there are also some neithernors that contains an IBinder!!)
 		/*
-		IFeature parameterTypeHasIBinder = new ParameterContainsTypeOrNameFeature("android.os.IBinder", 0.2f);
-		features.add(parameterTypeHasIBinder);
-		*/
-		
+		 * IFeature parameterTypeHasIBinder = new
+		 * ParameterContainsTypeOrNameFeature("android.os.IBinder", 0.2f);
+		 * features.add(parameterTypeHasIBinder);
+		 */
+
 		IFeature parameterTypeHasKey = new ParameterContainsTypeOrNameFeature("com.android.inputmethod.keyboard.Key");
 		features.add(parameterTypeHasKey);
 
 		IFeature parameterTypeHasIntend = new ParameterContainsTypeOrNameFeature("android.content.Intent");
 		features.add(parameterTypeHasIntend);
-		
+
 		IFeature parameterTypeHasFileDescriptor = new ParameterContainsTypeOrNameFeature("java.io.FileDescriptor");
 		features.add(parameterTypeHasFileDescriptor);
-		
-		IFeature parameterTypeHasFilterContext = new ParameterContainsTypeOrNameFeature("android.filterfw.core.FilterContext");
+
+		IFeature parameterTypeHasFilterContext = new ParameterContainsTypeOrNameFeature(
+				"android.filterfw.core.FilterContext");
 		features.add(parameterTypeHasFilterContext);
-		
+
 		IFeature parameterTypeHasString = new ParameterContainsTypeOrNameFeature("java.lang.String");
 		features.add(parameterTypeHasString);
 
@@ -1168,12 +1200,15 @@ public class SourceSinkFinder {
 		features.add(byteArrayReturnType);
 		IFeature cursorReturnType = new ReturnTypeFeature(ANDROID, "android.database.Cursor");
 		features.add(cursorReturnType);
-		/* Does not change anything
-		IFeature mergeCursorReturnType = new ReturnTypeFeature(MAPS, ANDROID, "android.database.MergeCursor");
-		features.add(mergeCursorReturnType);
-		IFeature webviewReturnType = new ReturnTypeFeature(MAPS, ANDROID, "android.webkit.WebView");
-		features.add(webviewReturnType);
-		*/
+		/*
+		 * Does not change anything
+		 * IFeature mergeCursorReturnType = new ReturnTypeFeature(MAPS, ANDROID,
+		 * "android.database.MergeCursor");
+		 * features.add(mergeCursorReturnType);
+		 * IFeature webviewReturnType = new ReturnTypeFeature(MAPS, ANDROID,
+		 * "android.webkit.WebView");
+		 * features.add(webviewReturnType);
+		 */
 		IFeature uriReturnType = new ReturnTypeFeature(ANDROID, "android.net.Uri");
 		features.add(uriReturnType);
 		IFeature connectionReturnType = new ReturnTypeFeature(ANDROID, "com.android.internal.telephony.Connection");
@@ -1184,7 +1219,7 @@ public class SourceSinkFinder {
 		features.add(returnTypeImplementsInterfaceMap);
 		IFeature returnTypeImplementsInterfaceParcelable = new ReturnTypeFeature(ANDROID, "android.os.Parcelable");
 		features.add(returnTypeImplementsInterfaceParcelable);
-		
+
 		IFeature hasParamsPerm = new MethodHasParametersFeature(0.2f);
 		features.add(hasParamsPerm);
 
@@ -1196,19 +1231,23 @@ public class SourceSinkFinder {
 		features.add(isStaticMethod);
 		IFeature isPublicMethod = new MethodModifierFeature(ANDROID, Modifier.PUBLIC);
 		features.add(isPublicMethod);
-		/* Does not change anything
-		IFeature isNativeMethod = new MethodModifierFeature(MAPS, ANDROID, Modifier.NATIVE);
-		features.add(isNativeMethod);
-		IFeature isAbstraceMethod = new MethodModifierFeature(MAPS, ANDROID, Modifier.ABSTRACT);
-		features.add(isAbstraceMethod);
-		IFeature isPrivateMethod = new MethodModifierFeature(MAPS, ANDROID, Modifier.PRIVATE);
-		features.add(isPrivateMethod);
-		*/
+		/*
+		 * Does not change anything
+		 * IFeature isNativeMethod = new MethodModifierFeature(MAPS, ANDROID,
+		 * Modifier.NATIVE);
+		 * features.add(isNativeMethod);
+		 * IFeature isAbstraceMethod = new MethodModifierFeature(MAPS, ANDROID,
+		 * Modifier.ABSTRACT);
+		 * features.add(isAbstraceMethod);
+		 * IFeature isPrivateMethod = new MethodModifierFeature(MAPS, ANDROID,
+		 * Modifier.PRIVATE);
+		 * features.add(isPrivateMethod);
+		 */
 		IFeature isProtectedMethod = new MethodModifierFeature(ANDROID, Modifier.PROTECTED);
 		features.add(isProtectedMethod);
 		IFeature isFinalMethod = new MethodModifierFeature(ANDROID, Modifier.FINAL);
 		features.add(isFinalMethod);
-		
+
 		/* Class modifiers */
 		IFeature isPrivateClassOfMethod = new MethodClassModifierFeature(ANDROID, ClassModifier.PRIVATE);
 		features.add(isPrivateClassOfMethod);
@@ -1224,29 +1263,39 @@ public class SourceSinkFinder {
 		features.add(isAbstractClassOfMethod);
 
 		/* Specific class properties */
-		/* Does not change anything
-		IFeature isInnerClassOfMethod = new MethodInnerClassFeature(MAPS, ANDROID, true);
-		features.add(isInnerClassOfMethod);
-		*/
+		/*
+		 * Does not change anything
+		 * IFeature isInnerClassOfMethod = new MethodInnerClassFeature(MAPS, ANDROID,
+		 * true);
+		 * features.add(isInnerClassOfMethod);
+		 */
 		IFeature isAnonymousClassOfMethod = new MethodAnonymousClassFeature(true);
 		features.add(isAnonymousClassOfMethod);
-		
-//		IFeature connectivityManagerClass = new MethodClassConcreteNameFeature("android.net.ConnectivityManager", 0.2f);
-//		features.add(connectivityManagerClass);
-//		
-//		IFeature telephonyManagerClass = new MethodClassConcreteNameFeature("android.telephony.TelephonyManager", 0.4f);
-//		features.add(telephonyManagerClass);
-//		
-//		IFeature locationManagerClass = new MethodClassConcreteNameFeature("android.location.LocationManager", 0.3f);
-//		features.add(locationManagerClass);
-//		
-//		IFeature accountManagerClass = new MethodClassConcreteNameFeature("android.accounts.AccountManager", 0.3f);
-//		features.add(accountManagerClass);
-//			
-//		IFeature smsManagerClass = new MethodClassConcreteNameFeature("android.telephony.gsm.SmsManager", 0.4f);
-//		features.add(smsManagerClass);
 
-		/* Class name ends with - gives a hint about the type of operation handled in the class */
+		// IFeature connectivityManagerClass = new
+		// MethodClassConcreteNameFeature("android.net.ConnectivityManager", 0.2f);
+		// features.add(connectivityManagerClass);
+		//
+		// IFeature telephonyManagerClass = new
+		// MethodClassConcreteNameFeature("android.telephony.TelephonyManager", 0.4f);
+		// features.add(telephonyManagerClass);
+		//
+		// IFeature locationManagerClass = new
+		// MethodClassConcreteNameFeature("android.location.LocationManager", 0.3f);
+		// features.add(locationManagerClass);
+		//
+		// IFeature accountManagerClass = new
+		// MethodClassConcreteNameFeature("android.accounts.AccountManager", 0.3f);
+		// features.add(accountManagerClass);
+		//
+		// IFeature smsManagerClass = new
+		// MethodClassConcreteNameFeature("android.telephony.gsm.SmsManager", 0.4f);
+		// features.add(smsManagerClass);
+
+		/*
+		 * Class name ends with - gives a hint about the type of operation handled in
+		 * the class
+		 */
 		IFeature managerClasses = new MethodClassEndsWithNameFeature("Manager");
 		features.add(managerClasses);
 		IFeature factoryClasses = new MethodClassEndsWithNameFeature("Factory");
@@ -1266,10 +1315,11 @@ public class SourceSinkFinder {
 
 		/* SLIGHTLY INCREASES FP FOR SINKS */
 		/*
-		IFeature providerClasses = new MethodClassEndsWithNameFeature("Provider", 0.4f);
-		features.add(providerClasses);
-		*/
-		
+		 * IFeature providerClasses = new MethodClassEndsWithNameFeature("Provider",
+		 * 0.4f);
+		 * features.add(providerClasses);
+		 */
+
 		IFeature googleIOClasses = new MethodClassContainsNameFeature("com.google.common.io");
 		features.add(googleIOClasses);
 		IFeature contentResolverClass = new MethodClassConcreteNameFeature("android.content.ContentResolver");
@@ -1284,25 +1334,28 @@ public class SourceSinkFinder {
 		features.add(contentProviderClass);
 		IFeature broadcastReceiverClass = new MethodClassConcreteNameFeature("android.app.BroadcastReceiver");
 		features.add(broadcastReceiverClass);
- 
-		//not in Testcase!
-//		IFeature locationListenerClass = new MethodClassConcreteNameFeature("android.location.LocationListener", 0.2f);
-//		features.add(locationListenerClass);
-		
-		//not in Testcase!
-//		IFeature phoneStateListenerClass = new MethodClassConcreteNameFeature("android.telephony.PhoneStateListener", 0.2f);
-//		features.add(phoneStateListenerClass);
-		
-//		IFeature dataFlowQuerySource = new DataFlowSourceFeature(ANDROID, "query", 0.6f);
-//		features.add(dataFlowQuerySource);
-//		
-//		IFeature dataFlowCreateTypedArrayListSource = new DataFlowSourceFeature(ANDROID, "createTypedArrayList", 0.6f);
-//		features.add(dataFlowCreateTypedArrayListSource);		
-		
 
-		
-//		IFeature parameterInSink = new ParameterInCallFeature(MAPS, ANDROID, "", CheckType.CheckSink);
-//		features.add(parameterInSink);
+		// not in Testcase!
+		// IFeature locationListenerClass = new
+		// MethodClassConcreteNameFeature("android.location.LocationListener", 0.2f);
+		// features.add(locationListenerClass);
+
+		// not in Testcase!
+		// IFeature phoneStateListenerClass = new
+		// MethodClassConcreteNameFeature("android.telephony.PhoneStateListener", 0.2f);
+		// features.add(phoneStateListenerClass);
+
+		// IFeature dataFlowQuerySource = new DataFlowSourceFeature(ANDROID, "query",
+		// 0.6f);
+		// features.add(dataFlowQuerySource);
+		//
+		// IFeature dataFlowCreateTypedArrayListSource = new
+		// DataFlowSourceFeature(ANDROID, "createTypedArrayList", 0.6f);
+		// features.add(dataFlowCreateTypedArrayListSource);
+
+		// IFeature parameterInSink = new ParameterInCallFeature(MAPS, ANDROID, "",
+		// CheckType.CheckSink);
+		// features.add(parameterInSink);
 		IFeature parameterInRemove = new ParameterInCallFeature(ANDROID, "remove", CheckType.CheckSink);
 		features.add(parameterInRemove);
 		IFeature parameterInSync = new ParameterInCallFeature(ANDROID, "sync", CheckType.CheckSink);
@@ -1313,13 +1366,13 @@ public class SourceSinkFinder {
 		features.add(parameterInOnCreate);
 		IFeature parameterInDelete = new ParameterInCallFeature(ANDROID, "delete", CheckType.CheckSink);
 		features.add(parameterInDelete);
-		IFeature parameterInSet = new ParameterInCallFeature(ANDROID, "set", -1, false /*true*/, CheckType.CheckSink);
+		IFeature parameterInSet = new ParameterInCallFeature(ANDROID, "set", -1, false /* true */, CheckType.CheckSink);
 		features.add(parameterInSet);
 		IFeature parameterInEnable = new ParameterInCallFeature(ANDROID, "enable", CheckType.CheckSink);
 		features.add(parameterInEnable);
 		IFeature parameterInDisable = new ParameterInCallFeature(ANDROID, "disable", CheckType.CheckSink);
 		features.add(parameterInDisable);
-		IFeature parameterInPut = new ParameterInCallFeature(ANDROID, "put", -1, false /*true*/, CheckType.CheckSink);
+		IFeature parameterInPut = new ParameterInCallFeature(ANDROID, "put", -1, false /* true */, CheckType.CheckSink);
 		features.add(parameterInPut);
 		IFeature parameterInStart = new ParameterInCallFeature(ANDROID, "start", CheckType.CheckSink);
 		features.add(parameterInStart);
@@ -1355,10 +1408,12 @@ public class SourceSinkFinder {
 		features.add(parameterInShow);
 		IFeature parameterInDispatch = new ParameterInCallFeature(ANDROID, "dispatch", CheckType.CheckSink);
 		features.add(parameterInDispatch);
-		/* Does not change anything
-		IFeature parameterInPrint = new ParameterInCallFeature(MAPS, ANDROID, "print", CheckType.CheckSink);
-		features.add(parameterInPrint);
-		*/
+		/*
+		 * Does not change anything
+		 * IFeature parameterInPrint = new ParameterInCallFeature(MAPS, ANDROID,
+		 * "print", CheckType.CheckSink);
+		 * features.add(parameterInPrint);
+		 */
 		IFeature parameterInPrintln = new ParameterInCallFeature(ANDROID, "println", CheckType.CheckSink);
 		features.add(parameterInPrintln);
 		IFeature parameterInCreate = new ParameterInCallFeature(ANDROID, "create", CheckType.CheckSink);
@@ -1371,7 +1426,7 @@ public class SourceSinkFinder {
 		features.add(parameterInRestore);
 		IFeature parameterInConnect = new ParameterInCallFeature(ANDROID, "connect", CheckType.CheckSink);
 		features.add(parameterInConnect);
-		
+
 		IFeature parameterInAbstract = new ParameterInCallFeature(ANDROID, "", CheckType.CheckSinkInAbstract);
 		features.add(parameterInAbstract);
 		IFeature parameterInCI = new ParameterInCallFeature(ANDROID,
@@ -1382,27 +1437,32 @@ public class SourceSinkFinder {
 		features.add(getInReturn);
 		IFeature queryInReturn = new ParameterInCallFeature(ANDROID, "query", CheckType.CheckSource);
 		features.add(queryInReturn);
-//		IFeature ctalInReturn = new ParameterInCallFeature("createTypedArrayList", CheckType.CheckSource);
-//		features.add(ctalInReturn);
+		// IFeature ctalInReturn = new ParameterInCallFeature("createTypedArrayList",
+		// CheckType.CheckSource);
+		// features.add(ctalInReturn);
 		IFeature createInReturn = new ParameterInCallFeature(ANDROID, "create", CheckType.CheckSource);
 		features.add(createInReturn);
 		IFeature obtainMessageInReturn = new ParameterInCallFeature(ANDROID, "obtainMessage", CheckType.CheckSource);
 		features.add(obtainMessageInReturn);
 		IFeature isInReturn = new ParameterInCallFeature(ANDROID, "is", CheckType.CheckSource);
 		features.add(isInReturn);
-		
+
 		IFeature parameterInNative = new ParameterInCallFeature(ANDROID, "", CheckType.CheckFromParamToNative);
 		features.add(parameterInNative);
-//		IFeature parameterInNative = new ParameterInCallFeature(MAPS, ANDROID, "", CheckType.CheckFromParamToInterface);
-//		features.add(parameterInNative);
+		// IFeature parameterInNative = new ParameterInCallFeature(MAPS, ANDROID, "",
+		// CheckType.CheckFromParamToInterface);
+		// features.add(parameterInNative);
 
-		/* Does not change anything
-		IFeature transactArgument2InReturn = new ParameterInCallFeature(MAPS, ANDROID, "transact", 2, false, CheckType.CheckSource);
-		features.add(transactArgument2InReturn);
-		*/
-		IFeature wtParcelArgument1InReturn = new ParameterInCallFeature(ANDROID, "writeToParcel", 0, false, CheckType.CheckSource);
+		/*
+		 * Does not change anything
+		 * IFeature transactArgument2InReturn = new ParameterInCallFeature(MAPS,
+		 * ANDROID, "transact", 2, false, CheckType.CheckSource);
+		 * features.add(transactArgument2InReturn);
+		 */
+		IFeature wtParcelArgument1InReturn = new ParameterInCallFeature(ANDROID, "writeToParcel", 0, false,
+				CheckType.CheckSource);
 		features.add(wtParcelArgument1InReturn);
-		
+
 		IFeature getToSink = new ParameterInCallFeature(ANDROID, "get", CheckType.CheckFromMethodToSink);
 		features.add(getToSink);
 
@@ -1411,10 +1471,11 @@ public class SourceSinkFinder {
 		IFeature methodReturnsConstant = new MethodReturnsConstantFeature(ANDROID);
 		features.add(methodReturnsConstant);
 
-		//sink feature
-//		IFeature parameterFlowsToSpecificMethod = new DataFlowFromParameterToSpecificMethodFeature(ANDROID, WRAPPER_FILE, 0.2f);
-//		features.add(parameterFlowsToSpecificMethod);
-		
+		// sink feature
+		// IFeature parameterFlowsToSpecificMethod = new
+		// DataFlowFromParameterToSpecificMethodFeature(ANDROID, WRAPPER_FILE, 0.2f);
+		// features.add(parameterFlowsToSpecificMethod);
+
 		IFeature classNameContainsTelephony = new BaseNameOfClassPackageName("telephony");
 		features.add(classNameContainsTelephony);
 		IFeature classNameContainsIO = new BaseNameOfClassPackageName("io");
@@ -1425,25 +1486,30 @@ public class SourceSinkFinder {
 		features.add(classNameContainsWebkit);
 		IFeature classNameContainsMusik = new BaseNameOfClassPackageName("music");
 		features.add(classNameContainsMusik);
-		
-//		IFeature notifyCalled = new MethodCallsMethodFeature(MAPS, ANDROID, "notify");
-//		features.add(notifyCalled);
-		IFeature notifyCalled = new MethodCallsMethodFeature(ANDROID, "android.database.sqlite.SQLiteDatabase", "insert");
+
+		// IFeature notifyCalled = new MethodCallsMethodFeature(MAPS, ANDROID,
+		// "notify");
+		// features.add(notifyCalled);
+		IFeature notifyCalled = new MethodCallsMethodFeature(ANDROID, "android.database.sqlite.SQLiteDatabase",
+				"insert");
 		features.add(notifyCalled);
-		
+
 		IFeature interfaceParameter = new ParameterIsInterfaceFeature(ANDROID);
 		features.add(interfaceParameter);
 
-		/* Does not change anything
-		IFeature binderCalled = new MethodCallsMethodFeature(MAPS, ANDROID, "android.os.IBinder", "transact");
-		features.add(binderCalled);
-		*/
-		
+		/*
+		 * Does not change anything
+		 * IFeature binderCalled = new MethodCallsMethodFeature(MAPS, ANDROID,
+		 * "android.os.IBinder", "transact");
+		 * features.add(binderCalled);
+		 */
+
 		IFeature isSetter = new MethodIsRealSetterFeature(ANDROID);
 		features.add(isSetter);
 
-//		IFeature invokeAdd = new MethodInvocationOnParameterFeature(MAPS, "ANDROID", "add");
-//		features.add(invokeAdd);
+		// IFeature invokeAdd = new MethodInvocationOnParameterFeature(MAPS, "ANDROID",
+		// "add");
+		// features.add(invokeAdd);
 
 		return features;
 	}
@@ -1451,11 +1517,12 @@ public class SourceSinkFinder {
 	/**
 	 * Initializes the set of features for classifying sources and sinks into
 	 * categories.
+	 * 
 	 * @return The generated feature set.
 	 */
 	private Set<IFeature> initializeFeaturesCategories() {
 		Set<IFeature> features = new HashSet<IFeature>();
-		
+
 		IFeature nameContainsProvider = new MethodNameContainsFeature("Provider");
 		features.add(nameContainsProvider);
 		IFeature nameContainsPreferred = new MethodNameContainsFeature("Preferred");
@@ -1544,36 +1611,36 @@ public class SourceSinkFinder {
 		features.add(mnameContainsPolicy);
 		IFeature mnameContainsAccount = new MethodNameContainsFeature("Account");
 		features.add(mnameContainsAccount);
-		IFeature mnameContainsWidth = new MethodNameContainsFeature("width"); //no-category
+		IFeature mnameContainsWidth = new MethodNameContainsFeature("width"); // no-category
 		features.add(mnameContainsWidth);
-		IFeature mnameContainsHeight = new MethodNameContainsFeature("heigth"); //no-category
+		IFeature mnameContainsHeight = new MethodNameContainsFeature("heigth"); // no-category
 		features.add(mnameContainsHeight);
 		features.add(mnameContainsWidth);
-		IFeature mnameContainsHost = new MethodNameContainsFeature("host"); //network-information
+		IFeature mnameContainsHost = new MethodNameContainsFeature("host"); // network-information
 		features.add(mnameContainsHost);
-		IFeature mnameContainsString = new MethodNameContainsFeature("string"); //network-information
+		IFeature mnameContainsString = new MethodNameContainsFeature("string"); // network-information
 		features.add(mnameContainsString);
-		IFeature mnameContainsImei = new MethodNameContainsFeature("imei"); //unique-identifier
+		IFeature mnameContainsImei = new MethodNameContainsFeature("imei"); // unique-identifier
 		features.add(mnameContainsImei);
-		IFeature mnameContainsLog = new MethodNameContainsFeature("log"); 
+		IFeature mnameContainsLog = new MethodNameContainsFeature("log");
 		features.add(mnameContainsLog);
-		IFeature mnameContainsWrite = new MethodNameContainsFeature("write"); 
+		IFeature mnameContainsWrite = new MethodNameContainsFeature("write");
 		features.add(mnameContainsWrite);
-		IFeature mnameContainsBattery = new MethodNameContainsFeature("battery"); 
+		IFeature mnameContainsBattery = new MethodNameContainsFeature("battery");
 		features.add(mnameContainsBattery);
-		IFeature mnameContainsOpen = new MethodNameContainsFeature("open"); 
+		IFeature mnameContainsOpen = new MethodNameContainsFeature("open");
 		features.add(mnameContainsOpen);
-		IFeature mnameContainsImage = new MethodNameContainsFeature("image"); 
+		IFeature mnameContainsImage = new MethodNameContainsFeature("image");
 		features.add(mnameContainsImage);
-		IFeature mnameContainsBitmap = new MethodNameContainsFeature("bitmap"); 
+		IFeature mnameContainsBitmap = new MethodNameContainsFeature("bitmap");
 		features.add(mnameContainsBitmap);
-		IFeature mnameContainsTimeZone = new MethodNameContainsFeature("TimeZone"); 
+		IFeature mnameContainsTimeZone = new MethodNameContainsFeature("TimeZone");
 		features.add(mnameContainsTimeZone);
-		IFeature mnameContainsEnabled = new MethodNameContainsFeature("Enabled"); 
+		IFeature mnameContainsEnabled = new MethodNameContainsFeature("Enabled");
 		features.add(mnameContainsEnabled);
-		IFeature mnameContainsDisabled = new MethodNameContainsFeature("Disabled"); 
+		IFeature mnameContainsDisabled = new MethodNameContainsFeature("Disabled");
 		features.add(mnameContainsDisabled);
-		
+
 		IFeature nameContainsService = new MethodClassContainsNameFeature("Service");
 		features.add(nameContainsService);
 		IFeature nameContainsLocation = new MethodClassContainsNameFeature("Location");
@@ -1644,28 +1711,30 @@ public class SourceSinkFinder {
 		features.add(cnameContainsVcard);
 		IFeature cnameContainsGallery = new MethodClassContainsNameFeature("Gallery");
 		features.add(cnameContainsGallery);
-		IFeature cnameContainsLayout = new MethodClassContainsNameFeature("layout"); //no-category
+		IFeature cnameContainsLayout = new MethodClassContainsNameFeature("layout"); // no-category
 		features.add(cnameContainsLayout);
-		IFeature packageNameSignal = new MethodClassContainsNameFeature("Signal"); //network-information
+		IFeature packageNameSignal = new MethodClassContainsNameFeature("Signal"); // network-information
 		features.add(packageNameSignal);
-		IFeature packageNameCdma = new MethodClassContainsNameFeature("cdma"); //network-information
+		IFeature packageNameCdma = new MethodClassContainsNameFeature("cdma"); // network-information
 		features.add(packageNameCdma);
-		IFeature packageNamePaint = new MethodClassContainsNameFeature("paint"); //image
+		IFeature packageNamePaint = new MethodClassContainsNameFeature("paint"); // image
 		features.add(packageNamePaint);
-		IFeature packageNameSSL = new MethodClassContainsNameFeature("ssl"); //network-information
+		IFeature packageNameSSL = new MethodClassContainsNameFeature("ssl"); // network-information
 		features.add(packageNameSSL);
-		IFeature packageNameScroll = new MethodClassContainsNameFeature("scroll"); //no-category
+		IFeature packageNameScroll = new MethodClassContainsNameFeature("scroll"); // no-category
 		features.add(packageNameScroll);
-		//IFeature packageNameVideo = new MethodClassContainsNameFeature("video"); //video (duplicate)
-		//features.add(packageNameVideo);
-		IFeature packageNameBattery = new MethodClassContainsNameFeature("battery"); //system-settings
+		// IFeature packageNameVideo = new MethodClassContainsNameFeature("video");
+		// //video (duplicate)
+		// features.add(packageNameVideo);
+		IFeature packageNameBattery = new MethodClassContainsNameFeature("battery"); // system-settings
 		features.add(packageNameBattery);
-		IFeature packageNameNetwork = new MethodClassContainsNameFeature("network"); //system-settings
+		IFeature packageNameNetwork = new MethodClassContainsNameFeature("network"); // system-settings
 		features.add(packageNameNetwork);
 		/*
-		IFeature cnameContainsInternal = new MethodClassContainsNameFeature("internal");
-		features.add(cnameContainsInternal);
-		*/
+		 * IFeature cnameContainsInternal = new
+		 * MethodClassContainsNameFeature("internal");
+		 * features.add(cnameContainsInternal);
+		 */
 		IFeature cnameContainsContactsContract = new MethodClassContainsNameFeature("ContactsContract");
 		features.add(cnameContainsContactsContract);
 		IFeature cnameContainsEmail = new MethodClassContainsNameFeature("Email");
@@ -1680,7 +1749,7 @@ public class SourceSinkFinder {
 		features.add(cnameContainsPhoneBook);
 		IFeature cNameContainsFactory = new MethodClassEndsWithNameFeature("Factory");
 		features.add(cNameContainsFactory);
-		
+
 		IFeature packageNameTelephony = new MethodClassContainsNameFeature("android.telephony.");
 		features.add(packageNameTelephony);
 		IFeature packageNameIntTelephony = new MethodClassContainsNameFeature("android.internal.telephony.");
@@ -1721,7 +1790,7 @@ public class SourceSinkFinder {
 		features.add(packageNameURL);
 		IFeature packageNameSip = new MethodClassContainsNameFeature("com.android.internal.telephony.sip");
 		features.add(packageNameSip);
-		
+
 		IFeature packageNameServerLocation = new MethodClassContainsNameFeature("com.android.server.location");
 		features.add(packageNameServerLocation);
 		IFeature packageNameServerNet = new MethodClassContainsNameFeature("com.android.server.net");
@@ -1738,7 +1807,7 @@ public class SourceSinkFinder {
 		features.add(packageNameServerPower);
 		IFeature packageNameInternalOs = new MethodClassContainsNameFeature("com.android.internal.os");
 		features.add(packageNameInternalOs);
-		
+
 		IFeature packageNameAndroidContacts = new MethodClassContainsNameFeature("com.android.contacts");
 		features.add(packageNameAndroidContacts);
 		IFeature packageNameTelephonyManager = new MethodClassContainsNameFeature("android.telephony.TelephonyManager");
@@ -1769,7 +1838,6 @@ public class SourceSinkFinder {
 		features.add(packageNameServerAm);
 		IFeature packageNameSyncManager = new MethodClassContainsNameFeature("android.content.SyncManager");
 		features.add(packageNameSyncManager);
-		
 
 		IFeature paramNdefMessage = new ParameterContainsTypeOrNameFeature("android.nfc.NdefMessage");
 		features.add(paramNdefMessage);
@@ -1818,7 +1886,7 @@ public class SourceSinkFinder {
 
 		IFeature parameterTypeHasFileDescriptor = new ParameterContainsTypeOrNameFeature("java.io.FileDescriptor");
 		features.add(parameterTypeHasFileDescriptor);
-		
+
 		IFeature callsMessageMethod = new MethodCallsMethodFeature(ANDROID, "", "Icc", true);
 		features.add(callsMessageMethod);
 		IFeature callsSystemProperties = new MethodCallsMethodFeature(ANDROID, "android.os.SystemProperties", "get");
@@ -1827,48 +1895,62 @@ public class SourceSinkFinder {
 		features.add(callsSystemSettings);
 		IFeature callsCellLocation = new MethodCallsMethodFeature(ANDROID, "", "getCellLocation");
 		features.add(callsCellLocation);
-		
+
 		IFeature methodBodyContainsAccounts = new MethodBodyContainsObjectFeature(ANDROID, "android.accounts.Account");
 		features.add(methodBodyContainsAccounts);
-		IFeature methodBodyContainsAccountManger = new MethodBodyContainsObjectFeature(ANDROID, "android.accounts.AccountManager");
+		IFeature methodBodyContainsAccountManger = new MethodBodyContainsObjectFeature(ANDROID,
+				"android.accounts.AccountManager");
 		features.add(methodBodyContainsAccountManger);
-		IFeature methodBodyContainsPhoneSubInfo = new MethodBodyContainsObjectFeature(ANDROID, "com.android.internal.telephony.IPhoneSubInfo");
+		IFeature methodBodyContainsPhoneSubInfo = new MethodBodyContainsObjectFeature(ANDROID,
+				"com.android.internal.telephony.IPhoneSubInfo");
 		features.add(methodBodyContainsPhoneSubInfo);
-		IFeature methodBodyContainsPhone = new MethodBodyContainsObjectFeature(ANDROID, "com.android.internal.telephony.Phone");
+		IFeature methodBodyContainsPhone = new MethodBodyContainsObjectFeature(ANDROID,
+				"com.android.internal.telephony.Phone");
 		features.add(methodBodyContainsPhone);
-		IFeature methodBodyContainsSMSManager = new MethodBodyContainsObjectFeature(ANDROID, "android.telephony.SmsManager");
+		IFeature methodBodyContainsSMSManager = new MethodBodyContainsObjectFeature(ANDROID,
+				"android.telephony.SmsManager");
 		features.add(methodBodyContainsSMSManager);
-		IFeature methodBodyContainsILocationManager = new MethodBodyContainsObjectFeature(ANDROID, "android.location.ILocationManager");
+		IFeature methodBodyContainsILocationManager = new MethodBodyContainsObjectFeature(ANDROID,
+				"android.location.ILocationManager");
 		features.add(methodBodyContainsILocationManager);
-		IFeature methodBodyContainsLocationRequest = new MethodBodyContainsObjectFeature(ANDROID, "android.location.LocationRequest");
+		IFeature methodBodyContainsLocationRequest = new MethodBodyContainsObjectFeature(ANDROID,
+				"android.location.LocationRequest");
 		features.add(methodBodyContainsLocationRequest);
-		IFeature methodBodyContainsLocationListener = new MethodBodyContainsObjectFeature(ANDROID, "android.location.LocationListener");
+		IFeature methodBodyContainsLocationListener = new MethodBodyContainsObjectFeature(ANDROID,
+				"android.location.LocationListener");
 		features.add(methodBodyContainsLocationListener);
-		IFeature methodBodyContainsCellLocation = new MethodBodyContainsObjectFeature(ANDROID, "android.telephony.CellLocation");
+		IFeature methodBodyContainsCellLocation = new MethodBodyContainsObjectFeature(ANDROID,
+				"android.telephony.CellLocation");
 		features.add(methodBodyContainsCellLocation);
 		IFeature methodBodyContainsBitmap = new MethodBodyContainsObjectFeature(ANDROID, "android.graphics.Bitmap");
 		features.add(methodBodyContainsBitmap);
-		IFeature methodBodyContainsMediaSet = new MethodBodyContainsObjectFeature(ANDROID, "com.android.gallery3d.data.MediaSet");
+		IFeature methodBodyContainsMediaSet = new MethodBodyContainsObjectFeature(ANDROID,
+				"com.android.gallery3d.data.MediaSet");
 		features.add(methodBodyContainsMediaSet);
-		IFeature methodBodyContainsISMS = new MethodBodyContainsObjectFeature(ANDROID, "com.android.internal.telephony.ISms");
+		IFeature methodBodyContainsISMS = new MethodBodyContainsObjectFeature(ANDROID,
+				"com.android.internal.telephony.ISms");
 		features.add(methodBodyContainsISMS);
-		IFeature methodBodyContainsSmsRawData = new MethodBodyContainsObjectFeature(ANDROID, "com.android.internal.telephony.SmsRawData");
+		IFeature methodBodyContainsSmsRawData = new MethodBodyContainsObjectFeature(ANDROID,
+				"com.android.internal.telephony.SmsRawData");
 		features.add(methodBodyContainsSmsRawData);
 		IFeature methodBodyContainsView = new MethodBodyContainsObjectFeature(ANDROID, "android.view.View");
 		features.add(methodBodyContainsView);
 		IFeature methodBodyContainsViewGroup = new MethodBodyContainsObjectFeature(ANDROID, "android.view.ViewGroup");
 		features.add(methodBodyContainsViewGroup);
-		IFeature methodBodyContainsSnapshotProvider = new MethodBodyContainsObjectFeature(ANDROID, "com.android.browser.provider.SnapshotProvider");
+		IFeature methodBodyContainsSnapshotProvider = new MethodBodyContainsObjectFeature(ANDROID,
+				"com.android.browser.provider.SnapshotProvider");
 		features.add(methodBodyContainsSnapshotProvider);
 		IFeature methodBodyContainsFileWriter = new MethodBodyContainsObjectFeature(ANDROID, "java.io.FileWriter");
 		features.add(methodBodyContainsFileWriter);
-		IFeature methodBodyContainsFileDescriptor = new MethodBodyContainsObjectFeature(ANDROID, "java.io.FileDescriptor");
+		IFeature methodBodyContainsFileDescriptor = new MethodBodyContainsObjectFeature(ANDROID,
+				"java.io.FileDescriptor");
 		features.add(methodBodyContainsFileDescriptor);
 		IFeature methodBodyContainsFile = new MethodBodyContainsObjectFeature(ANDROID, "java.io.File");
 		features.add(methodBodyContainsFile);
 		IFeature methodBodyContainsLog = new MethodBodyContainsObjectFeature(ANDROID, "android.util.Log");
 		features.add(methodBodyContainsLog);
-		IFeature methodBodyContainsBattery = new MethodBodyContainsObjectFeature(ANDROID, "com.android.internal.os.BatteryStatsImpl");
+		IFeature methodBodyContainsBattery = new MethodBodyContainsObjectFeature(ANDROID,
+				"com.android.internal.os.BatteryStatsImpl");
 		features.add(methodBodyContainsBattery);
 
 		return features;
