@@ -43,12 +43,13 @@ import de.ecspride.sourcesinkfinder.features.ParameterIsInterfaceFeature;
 import de.ecspride.sourcesinkfinder.features.PermissionNameFeature;
 import de.ecspride.sourcesinkfinder.features.ReturnTypeFeature;
 import de.ecspride.sourcesinkfinder.features.VoidOnMethodFeature;
+import org.apache.log4j.Logger;
 import soot.Scene;
 import soot.SootClass;
 import soot.SootMethod;
 import soot.jimple.infoflow.android.data.AndroidMethod;
-import soot.jimple.infoflow.android.data.AndroidMethod.CATEGORY;
-import soot.jimple.infoflow.android.data.AndroidMethodCategoryComparator;
+import soot.jimple.infoflow.sourcesSinks.definitions.MethodSourceSinkDefinition;
+import soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType;
 import soot.jimple.infoflow.android.data.parsers.CSVPermissionMethodParser;
 import soot.jimple.infoflow.android.data.parsers.PScoutPermissionMethodParser;
 import soot.jimple.infoflow.android.data.parsers.PermissionMethodParser;
@@ -58,10 +59,9 @@ import soot.jimple.infoflow.rifl.RIFLDocument.Assignable;
 import soot.jimple.infoflow.rifl.RIFLDocument.Category;
 import soot.jimple.infoflow.rifl.RIFLDocument.DomainSpec;
 import soot.jimple.infoflow.rifl.RIFLDocument.SourceSinkSpec;
-import soot.jimple.infoflow.rifl.RIFLDocument.SourceSinkType;
 import soot.jimple.infoflow.rifl.RIFLWriter;
-import soot.jimple.infoflow.source.data.ISourceSinkDefinitionProvider;
-import soot.jimple.infoflow.source.data.SourceSinkDefinition;
+import soot.jimple.infoflow.sourcesSinks.definitions.ISourceSinkDefinitionProvider;
+import soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkDefinition;
 import soot.jimple.infoflow.util.SootMethodRepresentationParser;
 import weka.classifiers.Classifier;
 import weka.classifiers.Evaluation;
@@ -96,7 +96,7 @@ public class SourceSinkFinder {
 	private final Set<IFeature> featuresSourceSink = initializeFeaturesSourceSink();
 	private final Set<IFeature> featuresCategories = initializeFeaturesCategories();
 	
-	private static String ANDROID;
+	private static String ANDROID; // android.jar的路径
 	
 	private static final HashSet<AndroidMethod> methodsWithPermissions = new HashSet<AndroidMethod>();
 			
@@ -115,6 +115,8 @@ public class SourceSinkFinder {
 	private long startCatSinksTime;
 	private long catSinksTime;
 
+	private final static Logger logger = Logger.getLogger(SourceSinkFinder.class.getName());
+
 	/**
 	 * @param args  *First parameter: ANDROID platform jar path
 	 * 				*Third - x parameter: names of input
@@ -122,6 +124,8 @@ public class SourceSinkFinder {
 	 */
 	public static void main(String[] args) {
 		try {
+			org.apache.log4j.BasicConfigurator.configure();
+
 			if (args.length < 3) {
 				System.out.println("Usage: java de.ecspride.sourcesinkfinder.SourceSinkFinder "
 						+ "<androidJAR> <input1>...<inputN> <outputFile>");
@@ -141,8 +145,10 @@ public class SourceSinkFinder {
 	}
 	
 	public void run(String[] inputFiles, String outputFile) throws IOException {
+		logger.info("Loading methods from " + Arrays.toString(inputFiles));
 		Set<AndroidMethod> methods = loadMethodsFromFile(inputFiles);
-		
+
+		logger.info("Prefiltering interfaces");
 		// Prefilter the interfaces
 		methods = PrefilterInterfaces(methods);
 		
@@ -206,9 +212,7 @@ public class SourceSinkFinder {
 				if (!m1.equals(m2)) {
 					// Merge the annotations
 					if (!m2.isAnnotated() && m1.isAnnotated()) {
-						m2.setSource(m1.isSource());
-						m2.setSink(m1.isSink());
-						m2.setNeitherNor(m1.isNeitherNor());
+						m2.setSourceSinkType(m1.getSourceSinkType());
 						for (String permission : m1.getPermissions())
 							m2.addPermission(permission);
 					}
@@ -221,7 +225,7 @@ public class SourceSinkFinder {
 					
 					// Merge the categories
 					if (m2.getSourceSinkType() == null && m1.getSourceSinkType() != null)
-						m2.setCategory(m1.getSourceSinkType());
+						m2.setSourceSinkType(m1.getSourceSinkType());
 				}
 			}
 		}
@@ -235,11 +239,11 @@ public class SourceSinkFinder {
 		int sinks = 0;
 		int neither = 0;
 		for (AndroidMethod am : methods)
-			if (am.isSource())
+			if (am.getSourceSinkType().isSource())
 				sources++;
-			else if (am.isSink())
+			else if (am.getSourceSinkType().isSink())
 				sinks++;
-			else if (am.isNeitherNor())
+			else if (am.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither)
 				neither++;
 		System.out.println("Annotated sources: " + sources + ", sinks: " + sinks
 				+ ", neither: " + neither);
@@ -258,7 +262,7 @@ public class SourceSinkFinder {
 
 			wr = new BufferedWriter(new FileWriter(appendFileName(targetFileName, "_Sources")));
 			for (AndroidMethod am : methods)
-				if (am.isSource()){
+				if (am.getSourceSinkType().isSource()){
 					if(diff && !methodsWithPermissions.contains(am))
 						wr.write(am.toString() + "\n");
 					else if(!diff)
@@ -269,7 +273,7 @@ public class SourceSinkFinder {
 			
 			wr = new BufferedWriter(new FileWriter(appendFileName(targetFileName, "_Sinks")));
 			for (AndroidMethod am : methods)
-				if (am.isSink()){
+				if (am.getSourceSinkType().isSink()){
 					if(diff && !methodsWithPermissions.contains(am))
 						wr.write(am.toString() + "\n");
 					else if(!diff)
@@ -280,7 +284,7 @@ public class SourceSinkFinder {
 
 			wr = new BufferedWriter(new FileWriter(appendFileName(targetFileName, "_NeitherNor")));
 			for (AndroidMethod am : methods)
-				if (am.isNeitherNor()){
+				if (am.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither){
 					if(diff && !methodsWithPermissions.contains(am))
 						wr.write(am.toString() + "\n");
 					else if(!diff)
@@ -295,6 +299,23 @@ public class SourceSinkFinder {
 		}
 	}
 
+	public class AndroidMethodCategoryComparator implements Comparator<AndroidMethod> {
+
+
+		@Override
+		public int compare(AndroidMethod o1, AndroidMethod o2) {
+			if (o1.getSourceSinkType() == null && o2.getSourceSinkType() == null) {
+				return 0;
+			}
+			if (o1.getSourceSinkType() == null) {
+				return -1;
+			}
+			if (o2.getSourceSinkType() == null) {
+				return 1;
+			}
+			return o1.getSourceSinkType().toString().compareTo(o2.getSourceSinkType().toString());
+		}
+	}
 	
 	private void writeCategoryResultsToFiles(String targetFileName,
 			Set<AndroidMethod> methods, boolean source, boolean sink, boolean diff) throws IOException {
@@ -306,9 +327,9 @@ public class SourceSinkFinder {
 		try {
 			if(source && !sink){
 				wr = new BufferedWriter(new FileWriter(appendFileName(targetFileName, "_CatSources")));
-				AndroidMethod.CATEGORY currentCat = null;
+				SourceSinkType currentCat = null;
 				for (AndroidMethod am : methodsAsList){
-					if (am.isSource()){
+					if (am.getSourceSinkType().isSource()){
 						if(currentCat == null || currentCat != am.getSourceSinkType()){
 							currentCat = am.getSourceSinkType();
 							if (currentCat == null)
@@ -327,9 +348,9 @@ public class SourceSinkFinder {
 			}
 			else if(sink && !source){
 				wr = new BufferedWriter(new FileWriter(appendFileName(targetFileName, "_CatSinks")));
-				AndroidMethod.CATEGORY currentCat = null;
+				SourceSinkType currentCat = null;
 				for (AndroidMethod am : methodsAsList){
-					if (am.isSink()){
+					if (am.getSourceSinkType().isSink()){
 						if(currentCat == null || currentCat != am.getSourceSinkType()){
 							currentCat = am.getSourceSinkType();
 							wr.write("\n" + currentCat.toString() + ":\n");
@@ -368,7 +389,7 @@ public class SourceSinkFinder {
 		doc.getFlowPolicy().add(doc.new FlowPair(bottomDomain, topDomain));
 		
 		Map<String, Category> categoryMap = new HashMap<String, Category>();
-		Map<CATEGORY, Assignable> assignableMap = new HashMap<CATEGORY, Assignable>();
+		Map<SourceSinkType, Assignable> assignableMap = new HashMap<SourceSinkType, Assignable>();
 		
 		for (AndroidMethod am : methods) {
 			// Parse the class and package names
@@ -378,7 +399,7 @@ public class SourceSinkFinder {
 			
 			// Generate the category if it does not already exist
 			if (am.getSourceSinkType() != null) {
-				if (am.isSource()) {
+				if (am.getSourceSinkType().isSource()) {
 					String catName = am.getSourceSinkType().toString() + "_src";
 					if (!categoryMap.containsKey(catName)) {
 						Category riflCat = doc.new Category(catName);
@@ -394,7 +415,7 @@ public class SourceSinkFinder {
 						doc.getDomainAssignment().add(doc.new DomainAssignment(riflAssignable, topDomain));
 					}
 				}
-				else if (am.isSink()) {
+				else if (am.getSourceSinkType().isSink()) {
 					String catName = am.getSourceSinkType().toString() + "_snk";
 					if (!categoryMap.containsKey(catName)) {
 						Category riflCat = doc.new Category(catName);
@@ -413,22 +434,22 @@ public class SourceSinkFinder {
 			}
 
 			// Add the source/sink specification
-			if (am.getSourceSinkType() != null && (am.isSource() || am.isSink())) {
-				String catName = am.getSourceSinkType().toString() + (am.isSource() ? "_src" : "_snk");
+			if (am.getSourceSinkType() != null && (am.getSourceSinkType().isSource() || am.getSourceSinkType().isSink())) {
+				String catName = am.getSourceSinkType().toString() + (am.getSourceSinkType().isSource() ? "_src" : "_snk");
 				Category riflCat = categoryMap.get(catName);
 				if (riflCat == null)
 					throw new RuntimeException("Could not get category " + catName);
 				
-				if (am.isSource()) {
+				if (am.getSourceSinkType().isSource()) {
 					// Taint the return value
-					SourceSinkSpec sourceSinkSpec = doc.new JavaReturnValueSpec(SourceSinkType.Source,
+					SourceSinkSpec sourceSinkSpec = doc.new JavaReturnValueSpec(soot.jimple.infoflow.rifl.RIFLDocument.SourceSinkType.Source,
 							smac.getClassName(), halfSignature);
 					riflCat.getElements().add(sourceSinkSpec);
 				}
-				else if (am.isSink()) {
+				else if (am.getSourceSinkType().isSink()) {
 					// Annotate all parameters
 					for (int i = 0; i < am.getParameters().size(); i++) {
-						SourceSinkSpec sourceSinkSpec = doc.new JavaParameterSpec(SourceSinkType.Sink,
+						SourceSinkSpec sourceSinkSpec = doc.new JavaParameterSpec(soot.jimple.infoflow.rifl.RIFLDocument.SourceSinkType.Sink,
 								smac.getClassName(), halfSignature, i + 1);
 						riflCat.getElements().add(sourceSinkSpec);
 					}
@@ -450,21 +471,22 @@ public class SourceSinkFinder {
 		Set<AndroidMethod> methods = new HashSet<AndroidMethod>();
 		for (String fileName : sourceFileName) {
 			ISourceSinkDefinitionProvider pmp = createParser(fileName);
-			Set<SourceSinkDefinition> methDefs = pmp.getAllMethods();
+			Set<soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkDefinition> methDefs = pmp.getAllMethods();
 			
 			for (SourceSinkDefinition ssd : methDefs) {
-				AndroidMethod am = (AndroidMethod) ssd.getMethod();
+				// 如果ssd是一个MethodSourceSinkDefinition，那么将其转换为AndroidMethod
+				AndroidMethod am = (AndroidMethod) ((MethodSourceSinkDefinition)ssd).getMethod();
 				if (methods.contains(am)) {
 					// Merge the methods
 					for (AndroidMethod amOrig : methods)
 						if (am.equals(amOrig)) {
 							// Merge the classification
-							if (am.isSource())
-								amOrig.setSource(true);
-							if (am.isSink())
-								amOrig.setSink(true);
-							if (am.isNeitherNor())
-								amOrig.setNeitherNor(true);
+							if (am.getSourceSinkType().isSource())
+								amOrig.setSourceSinkType(SourceSinkType.Source);
+							if (am.getSourceSinkType().isSink())
+								amOrig.setSourceSinkType(SourceSinkType.Sink);
+							if (am.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither)
+								amOrig.setSourceSinkType(SourceSinkType.Neither);
 							
 							// Merge the permissions and parameters
 							amOrig.getPermissions().addAll(am.getPermissions());
@@ -547,15 +569,15 @@ public class SourceSinkFinder {
 			instanceIndices.put(instanceId++, am);
 			
 			// Set the known classifications
-			if (am.isSource()) {
+			if (am.getSourceSinkType().isSource()) {
 				inst.setClassValue("source");
 				sourceTraining++;
 			}
-			else if (am.isSink()) {
+			else if (am.getSourceSinkType().isSink()) {
 				inst.setClassValue("sink");
 				sinkTraining++;
 			}
-			else if (am.isNeitherNor()) {
+			else if (am.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither) {
 				inst.setClassValue("neithernor");
 				nnTraining++;
 			}
@@ -609,15 +631,15 @@ public class SourceSinkFinder {
 				String cName = testInstances.classAttribute().value((int) d);
 				if (cName.equals("source")) {
 					inst.setClassValue("source");
-					meth.setSource(true);
+					meth.setSourceSinkType(SourceSinkType.Source);
 				}
 				else if (cName.equals("sink")) {
 					inst.setClassValue("sink");
-					meth.setSink(true);
+					meth.setSourceSinkType(SourceSinkType.Sink);
 				}
 				else if (cName.equals("neithernor")) {
 					inst.setClassValue("neithernor");
-					meth.setNeitherNor(true);
+					meth.setSourceSinkType(SourceSinkType.Neither);
 				}
 				else
 					System.err.println("Unknown class name");
@@ -648,7 +670,7 @@ public class SourceSinkFinder {
 			for (AndroidMethod am : methods) {
 				// Make sure that we run after source/sink classification
 				assert am.isAnnotated();
-				if (am.isSink() == sinks && am.isSource() == sources)
+				if (am.getSourceSinkType().isSink() == sinks && am.getSourceSinkType().isSource() == sources)
 					newMethods.add(am);
 			}
 			methods = newMethods;
@@ -657,14 +679,14 @@ public class SourceSinkFinder {
 		
 		// Build the class attribute, one possibility for every category
 		FastVector classes = new FastVector();
-		for (AndroidMethod.CATEGORY cat : AndroidMethod.CATEGORY.values()) {
+		for (SourceSinkType cat : SourceSinkType.values()) {
 			// Only add the class if it is actually used
-			if (cat == CATEGORY.NO_CATEGORY)
+			if (cat == SourceSinkType.Undefined)
 				classes.addElement(cat.toString());
 			else {
 				for (AndroidMethod am : methods)
-					if (am.isSource() == sources
-							&& am.isSink() == sinks
+					if (am.getSourceSinkType().isSource() == sources
+							&& am.getSourceSinkType().isSink() == sinks
 							&& am.getSourceSinkType() == cat) {
 						classes.addElement(cat.toString());
 						break;
@@ -737,9 +759,9 @@ public class SourceSinkFinder {
 
 		try {
 //			instances.randomize(new Random(1337));
-			int noCatIdx = classes.indexOf("NO_CATEGORY");
+			int noCatIdx = classes.indexOf("Undefined");
 			if (noCatIdx < 0)
-				throw new RuntimeException("Could not find NO_CATEGORY index");
+				throw new RuntimeException("Could not find Undefined index");
 
 			Classifier classifier = null;
 			if(WEKA_LEARNER_CATEGORIES.equals("BayesNet"))			// (IBK / kNN) vs. SMO vs. (J48 vs. JRIP) vs. NaiveBayes // MultiClassClassifier f�r ClassifierPerformanceEvaluator
@@ -786,7 +808,7 @@ public class SourceSinkFinder {
 				AndroidMethod meth = instanceMethods.get(inst.stringValue(idAttr));
 				double d = classifier.classifyInstance(inst);
 				String cName = trainInstances.classAttribute().value((int) d);
-				meth.setCategory(AndroidMethod.CATEGORY.valueOf(cName));
+				meth.setSourceSinkType(SourceSinkType.valueOf(cName));
 			}
 		}
 		catch (Exception ex) {
@@ -861,37 +883,36 @@ public class SourceSinkFinder {
 							
 							// If we have annotations for both methods, they must match
 							if (parentMethodData.isAnnotated() && method.isAnnotated())
-								if (parentMethodData.isSource() != method.isSource()
-										|| parentMethodData.isSink() != method.isSink()
-										|| parentMethodData.isNeitherNor() != method.isNeitherNor())
+								if (parentMethodData.getSourceSinkType().isSource() != method.getSourceSinkType().isSource()
+										|| parentMethodData.getSourceSinkType().isSink() != method.getSourceSinkType().isSink()
+										|| (parentMethodData.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither) != (method.getSourceSinkType() == soot.jimple.infoflow.sourcesSinks.definitions.SourceSinkType.Neither))
 									throw new RuntimeException("Annotation mismatch for "
 											+ parentMethodData + " and " + method);
 							if (parentMethodData.getSourceSinkType() != null && method.getSourceSinkType() != null)
-								if (parentMethodData.getSourceSinkType() != method.getSourceSinkType())
-									throw new RuntimeException("Category mismatch for "
-											+ parentMethod + " and " + method);
+								if (parentMethodData.getSourceSinkType() != SourceSinkType.Undefined && method.getSourceSinkType() != SourceSinkType.Undefined)
+									if (parentMethodData.getSourceSinkType() != method.getSourceSinkType()) {
+										System.out.println("parent source sink type: " + parentMethodData.getSourceSinkType() + " method source sink type: " + method.getSourceSinkType());
+										throw new RuntimeException("Category mismatch for "
+												+ parentMethod + " and " + method);
+									}
 
 							// If we only have annotations for the parent method, but not for
 							// the current one, we copy it down
 							if (parentMethodData.isAnnotated() && !method.isAnnotated()) {
-								method.setSource(parentMethodData.isSource());
-								method.setSink(parentMethodData.isSink());
-								method.setNeitherNor(parentMethodData.isNeitherNor());
+								method.setSourceSinkType(parentMethodData.getSourceSinkType());
 								copied = true;
 							}
 							if (parentMethodData.getSourceSinkType() != null && method.getSourceSinkType() == null)
-								method.setCategory(parentMethodData.getSourceSinkType());
+								method.setSourceSinkType(parentMethodData.getSourceSinkType());
 							
 							// If we only have annotations for the current method, but not for
 							// the parent one, we can copy it up
 							if (!parentMethodData.isAnnotated() && method.isAnnotated()) {
-								parentMethodData.setSource(method.isSource());
-								parentMethodData.setSink(method.isSink());
-								parentMethodData.setNeitherNor(method.isNeitherNor());
+								parentMethodData.setSourceSinkType(method.getSourceSinkType());
 								copied = true;
 							}
 							if (parentMethodData.getSourceSinkType() == null && method.getSourceSinkType() != null)
-								parentMethodData.setCategory(method.getSourceSinkType());
+								parentMethodData.setSourceSinkType(method.getSourceSinkType());
 						}
 						return copied ? Type.TRUE : Type.FALSE;
 					}
@@ -927,7 +948,7 @@ public class SourceSinkFinder {
 			
 				@Override
 				public Type appliesInternal(AndroidMethod method) {
-					SootMethod sm = getSootMethod(method);
+					SootMethod sm = getSootMethod(method); // 会出现找不到的类
 					if (sm == null)
 						return Type.NOT_SUPPORTED;
 					
